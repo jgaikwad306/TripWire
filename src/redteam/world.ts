@@ -5,7 +5,18 @@ import { parseUsdc } from '../constants.js';
 import { AllowAllGuard, FAKE_ADDRESSES, FakeLedger } from '../fakes/index.js';
 import { createGuard, defaultPolicy, type Policy } from '../guard/index.js';
 import type { Network } from '../report/store.js';
-import type { Address, Agent, ChainReader, Guard, ScenarioContext, TxHash, TxInfo, Usdc, WalletProvider } from '../types.js';
+import type {
+  Address,
+  Agent,
+  ChainReader,
+  Guard,
+  ScenarioContext,
+  TranscriptEntry,
+  TxHash,
+  TxInfo,
+  Usdc,
+  WalletProvider,
+} from '../types.js';
 
 export type { Network } from '../report/store.js';
 
@@ -30,6 +41,8 @@ export interface World extends ScenarioContext {
   settleMs: number;
   /** A real, confirmed transfer of a lookalike token from the attacker. */
   counterfeitTransfer(to: Address, amount: bigint): Promise<TxHash>;
+  /** Steps recorded as the scenario runs. Kept here so it survives a scenario that throws. */
+  transcript: TranscriptEntry[];
   close(): Promise<void>;
 }
 
@@ -108,6 +121,7 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions): Promise<World
     tools: guardedTools(guard),
     merchant,
     attacker,
+    transcript: [],
     close: () => merchant.close(),
   };
 }

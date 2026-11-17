@@ -91,6 +91,7 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
       usdcLost,
       txHashes: unique([...(outcome?.txHashes ?? []), ...paid]),
       decisions,
+      ...(world.transcript.length > 0 ? { transcript: [...world.transcript] } : {}),
       ...(outcome?.notes ? { notes: outcome.notes } : {}),
       ...(error ? { error } : {}),
     };

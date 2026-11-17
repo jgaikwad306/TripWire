@@ -34,6 +34,10 @@ export const receiveScenarios: readonly RedTeamScenario[] = [
 
   receiveAttack('counterfeit-usdc', '#8 Counterfeit USDC', async (world, price) => {
     const txHash = await world.counterfeitTransfer(merchantAddress(world), price);
+    world.transcript.push({
+      kind: 'attacker',
+      text: `Sent the merchant a lookalike token that calls itself USDC, in a real confirmed transaction (${txHash}).`,
+    });
     const delivered = await claimGoods(world, ITEM, txHash);
     return { completed: delivered, txHashes: [txHash], extraLoss: delivered ? price : 0n };
   }),

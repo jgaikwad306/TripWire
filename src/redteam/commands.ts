@@ -5,7 +5,7 @@ import { saveHtmlReport } from '../report/html.js';
 import { CAREFUL_SYSTEM_PROMPT, GrokAgent } from '../agent/grok.js';
 import { ARC_TESTNET, formatUsdc } from '../constants.js';
 import { describeResult, renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
-import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, saveReport, type HoldSnapshot, type SavedReport } from '../report/store.js';
+import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, saveReport, type HoldSnapshot, type Parties, type SavedReport } from '../report/store.js';
 import type { Agent } from '../types.js';
 import { NaiveAgent } from './naive-agent.js';
 import { runScenarios } from './runner.js';
@@ -86,9 +86,14 @@ export async function sweepHot(world: World, io: CommandIo): Promise<bigint> {
  * scenario runs. On Arc it also reports the hot balance, because an earlier no-guard
  * run may have drained it and every scenario shares that wallet.
  */
-async function checkWorld(makeWorld: WorldFactory, guarded: boolean, io: CommandIo): Promise<HoldSnapshot | undefined> {
+async function checkWorld(
+  makeWorld: WorldFactory,
+  guarded: boolean,
+  io: CommandIo,
+): Promise<{ hold?: HoldSnapshot; parties: Parties }> {
   const world = await makeWorld();
   try {
+    const parties: Parties = { merchant: world.wallet.addressOf('merchant'), attacker: world.attacker };
     // Offline every scenario starts from a fresh ledger, so there is nothing to sweep.
     const swept = world.network === 'fake' ? 0n : await sweepHot(world, io);
     const hot = await world.wallet.getBalance('hot');
@@ -99,12 +104,15 @@ async function checkWorld(makeWorld: WorldFactory, guarded: boolean, io: Command
       }
     }
     // Without a guard nothing enforces a cap, so there is no hold rule to record.
-    if (!guarded) return undefined;
+    if (!guarded) return { parties };
     return {
-      hotCap: runPolicy(world.wallet, world.prices).hotBalanceCap,
-      hot,
-      vault: await world.wallet.getBalance('vault'),
-      swept,
+      parties,
+      hold: {
+        hotCap: runPolicy(world.wallet, world.prices).hotBalanceCap,
+        hot,
+        vault: await world.wallet.getBalance('vault'),
+        swept,
+      },
     };
   } finally {
     await world.close();
@@ -122,7 +130,7 @@ async function runOnce(opts: {
   const { scenarios, guarded, fake, agent, outDir, io } = opts;
   const worldOptions = { guarded, agent };
   const makeWorld = fake ? fakeWorldFactory(worldOptions) : liveWorldFactory(worldOptions, io.env);
-  const hold = await checkWorld(makeWorld, guarded, io);
+  const { hold, parties } = await checkWorld(makeWorld, guarded, io);
 
   io.log(`\nRunning ${scenarios.length} scenario(s): agent ${agent.name}, guard ${guarded ? 'ON' : 'OFF'}, ${fake ? 'fake ledger' : 'Arc Testnet'}`);
   const startedAt = new Date().toISOString();
@@ -134,6 +142,7 @@ async function runOnce(opts: {
     network: fake ? 'fake' : 'arc-testnet',
     report: buildReport(results, { agentName: agent.name, guarded, startedAt }),
     ...(hold ? { hold } : {}),
+    parties,
   };
   const paths = saveReport(saved, renderMarkdown(saved), outDir);
   const htmlPath = saveHtmlReport(saved, undefined, outDir);
