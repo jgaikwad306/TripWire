@@ -52,7 +52,7 @@ interface WorldBase {
 
 const SETTLE_POLL_MS = 500;
 /** How long to wait for a confirmed transaction to show up on the RPC node we read from. */
-const LIVE_SETTLE_MS = 10_000;
+export const LIVE_SETTLE_MS = 5_000;
 
 /**
  * Reads a transaction, retrying until it is visible or the time is up. A wallet can

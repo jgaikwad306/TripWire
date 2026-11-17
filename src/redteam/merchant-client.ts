@@ -1,4 +1,5 @@
-const REQUEST_TIMEOUT_MS = 10_000;
+/** Must stay well above LIVE_SETTLE_MS: the merchant waits that long for an unknown tx hash before rejecting it. */
+export const REQUEST_TIMEOUT_MS = 30_000;
 
 export interface BuyResponse {
   status: number;
