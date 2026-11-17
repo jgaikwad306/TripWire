@@ -12,6 +12,7 @@ export const CHECK = {
   wallet: 'wallet',
   approval: 'approval',
   reconcile: 'reconcile',
+  monitoring: 'monitoring',
   // receive side
   recipient: 'recipient',
   network: 'network',

@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { buyCommand, compareCommand, noGuardCommand, reportCommand, runCommand } from './redteam/commands.js';
 import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.js';
 import { dashboardCommand } from './dashboard/server.js';
+import { streamsCommand } from './streams/commands.js';
 
 /**
  * Entry point: `npm run cli <command>`.
@@ -17,6 +18,7 @@ import { dashboardCommand } from './dashboard/server.js';
 type Command = (args: string[]) => Promise<void>;
 
 const commands: Record<string, Command> = {
+  streams: streamsCommand,
   dashboard: dashboardCommand,
   setup: setupCommand,
   'fake-usdc': fakeUsdcCommand,

@@ -37,6 +37,7 @@ import { addressSchema, type Policy } from './policy.js';
 import { evaluateIncoming, evaluateReceipt } from './receive.js';
 import { checkIntentMatch, evaluateSend, normalizeItem } from './send.js';
 import { MemoryGuardStore, type GuardStore, type PaymentRecord } from './store.js';
+import type { SpendingSafety } from '../streams/model.js';
 
 export { CHECK, type CheckName } from './checks.js';
 export { JsonFileGuardStore, MemoryGuardStore, type GuardStore } from './store.js';
@@ -44,6 +45,8 @@ export { JsonFileReplayLedger, MemoryReplayLedger, type ReplayLedger } from './i
 export { defaultPolicy, parsePolicy, type Policy } from './policy.js';
 
 export interface GuardDeps {
+  /** Optional independent outflow monitor. Failure blocks new spending. */
+  safety?: SpendingSafety;
   wallet: WalletProvider;
   chain: ChainReader;
   fetchQuote: QuoteFetcher;
@@ -196,8 +199,11 @@ class GuardedWallet implements Guard {
   private async sendTransfer(payment: PaymentRecord): Promise<PaymentRecord> {
     const { key, intentId, item, payTo, amount, at, delivered } = payment;
     const base = { key, intentId, item, payTo, amount, at, delivered };
+    await this.reserveOutflow(payment);
     try {
       const { txHash } = await this.deps.wallet.transfer({ from: 'hot', to: payTo, amount, idempotencyKey: key });
+      // A monitor outage after confirmation must not turn a known payment into a failure.
+      await this.deps.safety?.submitted(key, txHash).catch(() => undefined);
       return this.putPayment({ ...base, state: 'sent', txHash });
     } catch (err) {
       const state = err instanceof TransferRejectedError ? 'failed' : 'unknown';
@@ -243,6 +249,8 @@ class GuardedWallet implements Guard {
       if (this.unixNow() >= validBefore) return notPaid('The signed payment expired without being settled, so it can never be.');
     }
 
+    await this.reserveOutflow(payment, nonce);
+
     let payload: PaymentPayload;
     try {
       payload = await signPayment({
@@ -258,6 +266,8 @@ class GuardedWallet implements Guard {
 
     let answer: MerchantAnswer | undefined;
     let unreachable: string | undefined;
+    // Signing awaited a wallet API; a newly arrived incident must stop presentation too.
+    await this.monitoring(() => this.deps.safety?.check());
     try {
       answer = await this.presentPayment(intent, payload);
     } catch (err) {
@@ -409,7 +419,11 @@ class GuardedWallet implements Guard {
   }
 
   async requestPayment(req: PaymentRequest): Promise<Decision> {
-    return this.record(await this.payOnceApproved(req));
+    try { return this.record(await this.payOnceApproved(req)); }
+    catch (err) {
+      if (err instanceof MonitoringError) return this.record(deny(CHECK.monitoring, err.message));
+      throw err;
+    }
   }
 
   /**
@@ -439,8 +453,14 @@ class GuardedWallet implements Guard {
       const { wallet, policy } = this.deps;
       const excess = excessOverCap(await wallet.getBalance('hot'), policy.hotBalanceCap);
       if (excess === 0n) return;
+      const id = `sweep-${randomUUID()}`;
+      await this.monitoring(async () => {
+        await this.deps.safety?.reserve({ id, from: wallet.addressOf('hot'), to: wallet.addressOf('vault'), amount: excess.toString() });
+        await this.deps.safety?.check();
+      });
       try {
-        await wallet.transfer({ from: 'hot', to: wallet.addressOf('vault'), amount: excess });
+        const sent = await wallet.transfer({ from: 'hot', to: wallet.addressOf('vault'), amount: excess, idempotencyKey: id });
+        await this.deps.safety?.submitted(id, sent.txHash).catch(() => undefined);
       } catch (err) {
         throw new Error(`Rebalance to vault failed: ${errorMessage(err)}`);
       }
@@ -464,6 +484,8 @@ class GuardedWallet implements Guard {
       const settled = await this.settleEarlierPayments(req, intent);
       if (settled) return settled;
     }
+
+    await this.monitoring(() => this.deps.safety?.check());
 
     let hotBalance: Usdc;
     try {
@@ -645,6 +667,18 @@ class GuardedWallet implements Guard {
     }
   }
 
+  private async monitoring(action: () => Promise<void> | undefined): Promise<void> {
+    try { await action(); }
+    catch (err) { throw new MonitoringError(errorMessage(err)); }
+  }
+
+  private async reserveOutflow(payment: PaymentRecord, nonce?: TxHash): Promise<void> {
+    await this.monitoring(async () => {
+      await this.deps.safety?.reserve({ id: payment.key, from: this.deps.wallet.addressOf('hot'), to: payment.payTo, amount: payment.amount.toString(), ...(nonce ? { nonce } : {}) });
+      await this.deps.safety?.check();
+    });
+  }
+
   private record(decision: Decision): Decision {
     this.log = [...this.log, decision];
     return decision;
@@ -657,6 +691,8 @@ class GuardedWallet implements Guard {
     return result;
   }
 }
+
+class MonitoringError extends Error {}
 
 const isObject = (value: unknown): value is object => typeof value === 'object' && value !== null;
 

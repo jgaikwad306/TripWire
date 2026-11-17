@@ -330,5 +330,20 @@
   Promise.all([api('/api/config'), api('/api/state')]).then(([config, snapshot]) => {
     capabilities = config; catalog = config.scenarios; settings = config.defaults;
     $('connection').textContent = 'Connected'; $('connection-dot').style.background = 'var(--teal)'; hydrate(snapshot);
+    if (config.streamsEnabled) {
+      const nativeUnits = (raw) => { const n = BigInt(raw); return (n / 10n ** 18n).toString() + (n % 10n ** 18n ? '.' + (n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '') : ''); };
+      const pollStreams = async () => {
+        const panel = $('streams-monitor'); panel.hidden = false;
+        try {
+          const status = await api('/api/streams');
+          $('streams-state').textContent = status.frozen ? 'Spending frozen' : status.ready ? 'Monitoring live' : 'Spending blocked';
+          const coverage = status.startBlock === undefined ? '' : `Indexed blocks ${status.startBlock}–${status.coveredThrough}.`;
+          const age = status.dataAgeSeconds == null ? '' : `Data age: ${status.dataAgeSeconds} seconds.`;
+          $('streams-coverage').textContent = [status.reason || 'Following Arc Testnet.', coverage, age].filter(Boolean).join(' ');
+          $('streams-details').innerHTML = (status.alerts || []).slice(-10).reverse().map(a => `<p><strong>${a.acknowledged ? 'Reviewed' : 'Alert'}:</strong> ${h(a.reason)} · ${h(nativeUnits(a.amountNative))} USDC → ${h(a.to)}<br><code>${h(a.id)}</code></p>`).join('') + (status.recentTransfers || []).slice(0, 5).map(t => `<p>${h(nativeUnits(t.amountNative))} USDC · ${h(t.from)} → ${h(t.to)} · block ${h(t.block)}</p>`).join('');
+        } catch { $('streams-state').textContent = 'Monitoring unavailable'; $('streams-coverage').textContent = 'Guarded spending is blocked until monitoring recovers.'; }
+      };
+      void pollStreams(); setInterval(pollStreams, 5000);
+    }
   }).catch((err) => { $('notice').hidden = false; $('notice').textContent = err.message; $('connection').textContent = 'Disconnected'; });
 })();

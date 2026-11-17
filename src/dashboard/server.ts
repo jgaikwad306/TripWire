@@ -8,6 +8,7 @@ import { renderMarkdown } from '../report/render.js';
 import { serializeReport } from '../report/store.js';
 import { RunManager, DashboardError, type LiveEvent, type RunConfig } from './manager.js';
 import { renderDashboard } from './page.js';
+import { streamClient, streamsEnabled } from '../streams/client.js';
 
 export interface DashboardServer {
   url: string;
@@ -54,6 +55,11 @@ export async function startDashboard(options: {
     }
     if (path === '/api/config') return send(res, 200, json(manager.config()));
     if (path === '/api/state') return send(res, 200, json(manager.snapshot()));
+    if (path === '/api/streams') {
+      if (!streamsEnabled(manager.env)) return send(res, 200, json({ enabled: false }));
+      try { return send(res, 200, json(await streamClient(manager.env).status())); }
+      catch { return send(res, 200, json({ enabled: true, ready: false, reason: 'Streams monitor unavailable; guarded spending blocked.' })); }
+    }
     if (path === '/api/runs') {
       if (closing) throw new DashboardError('The dashboard is shutting down.', 503);
       let body = '';

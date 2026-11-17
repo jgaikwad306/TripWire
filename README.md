@@ -275,9 +275,62 @@ npm run cli buy -- --fake             # offline, with a sample wallet
 ```
 
 - The steps are: quote (the merchant's 402 terms), the guard's checks, an x402 payment the guard signs, the merchant's checks and Circle's settlement, the data is returned with the payment's answer, and the agent summarises the three largest transfers.
-- The data comes from the Arc Testnet explorer's API (`src/chain/activity.ts`). The RPC node only serves logs for about a thousand blocks per call, which is too little history.
+- With QuickNode Streams enabled, watched wallets use the locally indexed USDC history described below. Other addresses and installations without Streams use the Arc Testnet explorer's API (`src/chain/activity.ts`). The public RPC node limits logs to about a thousand blocks per call; Streams backfills a configured historical range and follows new blocks without relying on that RPC log window.
 - The run counts as completed only if the report was delivered against a payment and the answer names the largest transfers in what was delivered.
 - The report page gets a "Paid API" tab with the payment link, the answer and every step. The same purchase is scenario `paid-api` in full runs, so `--all` has four honest scenarios.
+
+### QuickNode Streams: USDC monitoring and backfill
+
+TripWire uses a **real QuickNode Stream with a JavaScript filter and an HTTPS webhook destination**. The `block_with_receipts` filter in [`src/streams/filter.js`](src/streams/filter.js) selects receipts involving the hot, vault, or merchant wallet. Setup injects the existing Circle addresses. Every batch also carries compact block checkpoints, so an idle wallet does not look like a disconnected Stream.
+
+The monitor records unexpected hot/vault outflows, freezes subsequent guarded spending, supplies indexed receipt and authorization evidence, and powers watched-wallet activity reports. The merchant address is included for incoming receipt verification; its outgoing refunds do not freeze the owner's wallets.
+
+**Set up the live Stream:**
+
+1. Add `QUICKNODE_API_KEY` to `.env` using a QuickNode API key with Streams access. Keep `QUICKNODE_STREAMS_ENABLED=false` during setup. Existing Circle wallet configuration is also required; the monitor resolves their addresses without sending a transaction.
+2. Start the monitor and leave it running:
+
+   ```bash
+   npm run cli streams serve
+   ```
+
+3. Install [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/) and, in another terminal, expose **only port 4021**:
+
+   ```bash
+   cloudflared tunnel --url http://127.0.0.1:4021 --no-autoupdate --protocol http2
+   ```
+
+4. Copy the printed HTTPS hostname and create the Stream:
+
+   ```bash
+   npm run cli streams setup -- --webhook-url https://YOUR-HOST.trycloudflare.com/webhooks/quicknode --backfill-blocks 10000
+   npm run cli streams status
+   ```
+
+   Setup tests the filter on QuickNode, creates a paused `arc-testnet` Stream, records its ID, updates its webhook destination, and activates it. It uses elastic batching and five blocks per batch, or the account's lower maximum. A saved provisioning intent and QuickNode `external_id` make retries reuse the same Stream and historical boundary. Rerun setup with a new tunnel URL after a tunnel restart. The first setup fixes the backfill range; use a separate data directory for a different watchlist or initial range.
+
+5. Wait until status reports `"ready": true`, then set `QUICKNODE_STREAMS_ENABLED=true` in `.env` and restart the dashboard or purchasing process. The dashboard shows coverage, recent transfers, alerts, and the freeze reason. Try a guarded purchase:
+
+   ```bash
+   npm run cli buy
+   ```
+
+`QUICKNODE_STREAMS_DATA_DIR` defaults to `.data/streams`; `QUICKNODE_STREAMS_CONTROL_URL` defaults to `http://127.0.0.1:4022`. Custom listener ports are available through `streams serve -- --webhook-port … --control-port …`. The control port requires a generated local secret and must stay private. The public listener exposes only `POST /webhooks/quicknode` and verifies QuickNode's HMAC over the original bytes using `X-QN-Nonce`, `X-QN-Timestamp`, and `X-QN-Signature`. Configure **uncompressed** delivery. Credentials have owner-only permissions, and `.data/` is ignored by Git.
+
+**What freezes spending:** An outflow must match a previously recorded guarded authorization, including its nonce and exact transfer terms, or a direct transfer's confirmed hash. A recipient allowlist alone is insufficient. Vault sweeps are registered before submission. If their webhook arrives before the hash is returned, spending waits for reconciliation; after two minutes an unresolved transfer raises an alert. Any vault debit is unexpected because the agent cannot spend from the vault. Native USDC sends are covered using Arc's system emitter, including values below six-decimal precision; ERC-20 mirror logs are not counted twice. Gas fees do not produce these transfer events. See [Arc's event reference](https://docs.arc.io/arc/references/usdc-system-events).
+
+The journal is flushed before webhook acknowledgment and survives restarts. Backfill at or below the installation boundary is historical evidence, not a new incident. Live guarded spending stops while coverage is incomplete, has gaps, is more than 60 seconds stale, or the monitor is unreachable. Conflicting finalized blocks stop the index and require investigation. Incoming receipt verification can continue using valid indexed evidence or RPC; a missing index entry never proves an authorization is unused. Existing signature, token, recipient, amount, confirmation, and replay checks still apply.
+
+**Review and clear an incident:**
+
+```bash
+npm run cli streams status
+npm run cli streams unfreeze -- --alert-id '0xTRANSACTION_HASH:LOG_INDEX' --reason 'Reviewed this controlled testnet transfer'
+```
+
+Every outstanding alert needs its own explicit acknowledgment. Acknowledgments are durable audit records; clearing an alert does not bypass unavailable monitoring. A freeze stops future guarded submissions, including retries and spending after owner approval. It cannot reverse a completed transfer or revoke an authorization already signed. Deliberate `--no-guard` runs bypass the spending guard and can trigger monitoring alerts that must be reviewed before the next guarded run.
+
+Keep the monitor, HTTPS tunnel, and machine running for the live demo. A temporary tunnel URL expires when its process stops. QuickNode retries failed delivery and eventually pauses the Stream; after restarting the listener/tunnel, rerun setup to update the destination and reactivate it. Preserve the data directory, including the journal and provisioning intent. A corrupt or incomplete journal fails closed; restore a complete backup rather than deleting safety history. Backfill consumes QuickNode credits, and a smaller account batch limit can make initial catch-up slower. Coverage extends from the configured start block, not automatically from wallet creation.
 
 ### Owner approval
 
