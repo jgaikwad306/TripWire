@@ -1,0 +1,26 @@
+{
+  "name": "agent-wallet-guard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Guarded stablecoin wallet for AI agents on Circle Arc, with a built-in red-team suite and safety score.",
+  "scripts": {
+    "cli": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@circle-fin/developer-controlled-wallets": "^10.8.1",
+    "dotenv": "^16.4.5",
+    "openai": "^4.77.0",
+    "viem": "^2.21.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
