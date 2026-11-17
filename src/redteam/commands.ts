@@ -8,7 +8,7 @@ import { NaiveAgent } from './naive-agent.js';
 import { runScenarios } from './runner.js';
 import { ALL_SCENARIOS, findScenario, type RedTeamScenario } from './scenarios/index.js';
 import { buildReport } from './score.js';
-import { fakeWorldFactory, liveWorldFactory, type WorldFactory } from './world.js';
+import { fakeWorldFactory, liveWorldFactory, type World, type WorldFactory } from './world.js';
 
 const AGENT_KINDS = ['naive', 'grok', 'grok-careful'] as const;
 type AgentKind = (typeof AGENT_KINDS)[number];
@@ -57,6 +57,28 @@ function createAgent(requested: string | undefined, env: NodeJS.ProcessEnv): Age
 const HOT_BALANCE_NEEDED_IN_DATASETS = 3n;
 
 /**
+ * The "hold" rule: before a run, the guard moves anything above the hot wallet's cap
+ * into the vault, so the agent only ever has the capped amount within reach. Without a
+ * guard this does nothing, which is the point of the baseline. Returns the amount swept.
+ * A failed sweep is reported but does not stop the run.
+ */
+export async function sweepHot(world: World, io: CommandIo): Promise<bigint> {
+  // Measured at the vault: the hot wallet also pays gas, so its drop overstates the sweep.
+  const before = await world.wallet.getBalance('vault');
+  try {
+    await world.guard.rebalance();
+  } catch (err) {
+    io.log(`WARNING: could not sweep the hot wallet: ${err instanceof Error ? err.message : String(err)}`);
+    return 0n;
+  }
+  const swept = (await world.wallet.getBalance('vault')) - before;
+  if (swept > 0n) {
+    io.log(`Hold: swept ${formatUsdc(swept)} USDC from the hot wallet to the vault ${world.wallet.addressOf('vault')}.`);
+  }
+  return swept > 0n ? swept : 0n;
+}
+
+/**
  * Builds one world up front so missing keys or wallets fail once, clearly, before any
  * scenario runs. On Arc it also reports the hot balance, because an earlier no-guard
  * run may have drained it and every scenario shares that wallet.
@@ -65,6 +87,7 @@ async function checkWorld(makeWorld: WorldFactory, io: CommandIo): Promise<void>
   const world = await makeWorld();
   try {
     if (world.network === 'fake') return;
+    await sweepHot(world, io);
     const hot = await world.wallet.getBalance('hot');
     io.log(`Hot wallet ${world.wallet.addressOf('hot')} holds ${formatUsdc(hot)} USDC.`);
     if (hot < world.prices.dataset * HOT_BALANCE_NEEDED_IN_DATASETS) {
