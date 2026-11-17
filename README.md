@@ -33,6 +33,35 @@ npm run typecheck
 
 Everything in `test/` runs offline against the fakes in `src/fakes/` — no keys or network needed.
 
+## Wallet setup (lane A)
+
+1. Create a Circle developer account at https://console.circle.com, make an API key, and register an entity secret (see the SDK's `generateEntitySecret` / `registerEntitySecretCiphertext`). Put both in `.env`.
+2. Create the wallets, then paste the printed lines into `.env` and fund the listed addresses from the faucet:
+
+   ```bash
+   npm run cli setup
+   ```
+
+3. Check balances and prove a real transfer works (sends 0.01 USDC hot → merchant):
+
+   ```bash
+   npm run cli setup -- --test-transfer
+   ```
+
+4. Deploy the counterfeit token for the fake-USDC scenario, then paste `FAKE_USDC_ADDRESS` into `.env`:
+
+   ```bash
+   npm run cli fake-usdc
+   ```
+
+Other lanes get the real wallet and chain reader with `createLiveWallet()` from `src/wallet/index.ts`. Vault, hot and merchant are Circle wallets; the attacker is a throwaway local key that is only watched (and used to send counterfeit tokens via `sendCounterfeit`).
+
+Read-only checks against the real Arc RPC, no keys needed:
+
+```bash
+LIVE=1 npm test
+```
+
 ## Arc Testnet
 
 | | |
