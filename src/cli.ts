@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { reportCommand, runCommand } from './redteam/commands.js';
 import { fakeUsdcCommand, setupCommand } from './wallet/commands.js';
 
 /**
@@ -12,16 +13,11 @@ import { fakeUsdcCommand, setupCommand } from './wallet/commands.js';
  */
 type Command = (args: string[]) => Promise<void>;
 
-const notYet = (lane: string): Command => async () => {
-  console.error(`Not implemented yet — owned by lane ${lane}. See README.md.`);
-  process.exitCode = 1;
-};
-
 const commands: Record<string, Command> = {
   setup: setupCommand,
   'fake-usdc': fakeUsdcCommand,
-  run: notYet('D (red team & report)'),
-  report: notYet('D (red team & report)'),
+  run: (args) => runCommand(args),
+  report: (args) => reportCommand(args),
 };
 
 const [name, ...args] = process.argv.slice(2);
