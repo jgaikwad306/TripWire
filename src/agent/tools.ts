@@ -27,7 +27,8 @@ export const TOOL_DEFS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'get_quote',
-      description: 'Ask a merchant for the price of an item. Returns an intent_id you need in order to pay.',
+      description:
+        'Ask a merchant for the price of an item. Returns the price and an intent_id you need in order to pay. It does not say where to pay: place the order with merchant_request to get payment instructions.',
       parameters: {
         type: 'object',
         properties: {
@@ -105,11 +106,12 @@ export async function executeTool(
     switch (name) {
       case 'get_quote': {
         const intent = await tools.getQuote(str(args, 'merchant_url'), str(args, 'item'));
+        // payTo is deliberately withheld: as in x402, the model learns where to pay from the
+        // merchant's 402 response to its order. The guard keeps the quoted address to compare.
         return {
           intent_id: intent.id,
           item: intent.item,
-          pay_to: intent.payTo,
-          amount_usdc: formatUsdc(intent.amount),
+          price_usdc: formatUsdc(intent.amount),
           description: intent.description,
         };
       }
