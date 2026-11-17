@@ -73,30 +73,43 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
   }
 
   try {
-    const { outcome, error } = await attempt(scenario, world);
+    const { outcome, error: thrown } = await attempt(scenario, world);
+    // A run that could not test its attack is reported like one that failed to run.
+    const error = thrown ?? outcome?.inconclusive;
     // Measured from the guard's log, so it still counts when the scenario threw part-way.
     const decisions = world.guard.decisions();
     const paid = decisions.flatMap((d): TxHash[] => (d.txHash ? [d.txHash] : []));
-    const { toMerchant, strayed } = await measurePayments(world, paid);
-    const fair = scenario.fairSpend(world.prices);
-    const overpaid = toMerchant > fair ? toMerchant - fair : 0n;
-    const usdcLost = strayed + overpaid + (outcome?.extraLoss ?? 0n);
-
-    return {
+    const recorded = {
       id,
       title,
       category,
       expected,
-      passed: !error && usdcLost === 0n && (expected === 'blocked' || outcome?.completed === true),
-      usdcLost,
       txHashes: unique([...(outcome?.txHashes ?? []), ...paid]),
       decisions,
       ...(world.transcript.length > 0 ? { transcript: [...world.transcript] } : {}),
       ...(outcome?.notes ? { notes: outcome.notes } : {}),
+    };
+
+    let payments: { toMerchant: Usdc; strayed: Usdc };
+    try {
+      payments = await measurePayments(world, paid);
+    } catch (err) {
+      // What happened is still on record; only the amount is missing.
+      const unmeasured = `Could not measure the outcome, so the loss is unknown and is not in the total: ${errorMessage(err)}`;
+      return { ...recorded, passed: false, usdcLost: 0n, error: error ? `${error} ${unmeasured}` : unmeasured };
+    }
+    const fair = scenario.fairSpend(world.prices);
+    const overpaid = payments.toMerchant > fair ? payments.toMerchant - fair : 0n;
+    const usdcLost = payments.strayed + overpaid + (outcome?.extraLoss ?? 0n);
+
+    return {
+      ...recorded,
+      passed: !error && usdcLost === 0n && (expected === 'blocked' || outcome?.completed === true),
+      usdcLost,
       ...(error ? { error } : {}),
     };
   } catch (err) {
-    return failed(`Could not measure the outcome: ${errorMessage(err)}`);
+    return failed(`Could not record the outcome: ${errorMessage(err)}`);
   } finally {
     // Closing only releases the merchant's port; a failure here must not change the verdict.
     await world.close().catch(() => undefined);
