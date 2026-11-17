@@ -1,3 +1,4 @@
+import { ExplorerActivityReader, buildActivityReport, type ActivityReader } from '../chain/activity.js';
 import { httpQuoteFetcher } from '../merchant/quote.js';
 import { startMerchant, type MockMerchant } from '../merchant/server.js';
 import { guardedTools } from '../agent/tools.js';
@@ -20,13 +21,38 @@ import type {
 
 export type { Network } from '../report/store.js';
 
-export type ItemName = 'report' | 'dataset';
+export type ItemName = 'report' | 'dataset' | 'wallet-activity';
 export type Prices = Readonly<Record<ItemName, Usdc>>;
 
+/** The paid API costs the same everywhere: the task gives the agent a fixed budget for it. */
+const ACTIVITY_PRICE = parseUsdc('0.05');
+
 /** Offline prices. */
-export const FAKE_PRICES: Prices = { report: parseUsdc('0.5'), dataset: parseUsdc('2') };
+export const FAKE_PRICES: Prices = { report: parseUsdc('0.5'), dataset: parseUsdc('2'), 'wallet-activity': ACTIVITY_PRICE };
 /** Smaller prices on Arc Testnet so faucet funds last through many runs. */
-export const LIVE_PRICES: Prices = { report: parseUsdc('0.05'), dataset: parseUsdc('0.2') };
+export const LIVE_PRICES: Prices = { report: parseUsdc('0.05'), dataset: parseUsdc('0.2'), 'wallet-activity': ACTIVITY_PRICE };
+
+/** Offline, the wallet the activity report is about, with a short made-up history. */
+export const FAKE_ACTIVITY_SUBJECT: Address = '0x00000000000000000000000000000000000000b1';
+const FAKE_COUNTERPARTIES: readonly Address[] = [
+  '0x00000000000000000000000000000000000000c1',
+  '0x00000000000000000000000000000000000000c2',
+  '0x00000000000000000000000000000000000000c3',
+];
+
+/** Gives the sample wallet some history. It touches no wallet a scenario spends from. */
+function seedActivity(ledger: FakeLedger): void {
+  const [first, second, third] = FAKE_COUNTERPARTIES as [Address, Address, Address];
+  ledger.fund(FAKE_ACTIVITY_SUBJECT, parseUsdc('10'));
+  const history: readonly [Address, Address, string][] = [
+    [FAKE_ACTIVITY_SUBJECT, first, '0.8'],
+    [FAKE_ACTIVITY_SUBJECT, second, '3'],
+    [first, FAKE_ACTIVITY_SUBJECT, '0.4'],
+    [FAKE_ACTIVITY_SUBJECT, third, '1.25'],
+    [FAKE_ACTIVITY_SUBJECT, second, '0.15'],
+  ];
+  for (const [from, to, amount] of history) ledger.transferFrom(from, to, parseUsdc(amount));
+}
 
 const FAKE_VAULT_BALANCE = parseUsdc('100');
 const FAKE_HOT_BALANCE = parseUsdc('10');
@@ -41,6 +67,8 @@ export interface World extends ScenarioContext {
   settleMs: number;
   /** A real, confirmed transfer of a lookalike token from the attacker. */
   counterfeitTransfer(to: Address, amount: bigint): Promise<TxHash>;
+  /** The wallet the paid activity report is bought for. */
+  activitySubject: Address;
   /** Steps recorded as the scenario runs. Kept here so it survives a scenario that throws. */
   transcript: TranscriptEntry[];
   close(): Promise<void>;
@@ -50,6 +78,8 @@ export interface WorldOptions {
   /** false = the `--no-guard` baseline: every payment and receipt is approved. */
   guarded: boolean;
   agent: Agent;
+  /** Wallet to buy the activity report for. Defaults to a sample wallet offline and the hot wallet on Arc. */
+  activitySubject?: Address;
 }
 
 export type WorldFactory = () => Promise<World>;
@@ -61,6 +91,10 @@ interface WorldBase {
   prices: Prices;
   settleMs: number;
   counterfeitTransfer(to: Address, amount: bigint): Promise<TxHash>;
+  /** Where the merchant's activity report gets its data. */
+  activity: ActivityReader;
+  /** The wallet reported on unless the caller names another. */
+  activitySubject: Address;
 }
 
 const SETTLE_POLL_MS = 500;
@@ -106,6 +140,12 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions): Promise<World
     payTo: wallet.addressOf('merchant'),
     attacker,
     prices: { ...prices },
+    resources: {
+      'wallet-activity': {
+        description: 'Recent USDC transfers of one wallet, newest first.',
+        fetch: (subject) => buildActivityReport(base.activity, subject),
+      },
+    },
     // The merchant side of the guard: check a payment proof before handing goods over.
     verifyPayment: async (req) => {
       // Give a just-confirmed payment time to appear before judging it. If the chain cannot
@@ -121,6 +161,7 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions): Promise<World
     tools: guardedTools(guard),
     merchant,
     attacker,
+    activitySubject: opts.activitySubject ?? base.activitySubject,
     transcript: [],
     close: () => merchant.close(),
   };
@@ -130,11 +171,14 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions): Promise<World
 export function fakeWorldFactory(opts: WorldOptions): WorldFactory {
   return async () => {
     const ledger = new FakeLedger({ vault: FAKE_VAULT_BALANCE, hot: FAKE_HOT_BALANCE });
+    seedActivity(ledger);
     return assembleWorld(
       {
         network: 'fake',
         wallet: ledger,
         chain: ledger,
+        activity: ledger,
+        activitySubject: FAKE_ACTIVITY_SUBJECT,
         prices: FAKE_PRICES,
         settleMs: 0,
         counterfeitTransfer: async (to, amount) => ledger.counterfeitTransfer(FAKE_ADDRESSES.attacker, to, amount),
@@ -165,6 +209,9 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
         network: 'arc-testnet',
         wallet,
         chain,
+        activity: new ExplorerActivityReader(),
+        // The hot wallet's own history: it shows what earlier runs paid, and to whom.
+        activitySubject: wallet.addressOf('hot'),
         prices: LIVE_PRICES,
         settleMs: LIVE_SETTLE_MS,
         counterfeitTransfer: (to, amount) =>

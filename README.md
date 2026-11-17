@@ -179,6 +179,21 @@ npm run cli report
 - `--agent naive` is a scripted agent that believes everything it reads (`src/redteam/naive-agent.ts`), so the suite runs with no API key and gives the same result every time. The default is Grok when `XAI_API_KEY` and `XAI_MODEL` are set.
 - `docs/DEMO.md` has the demo script.
 
+### Paid API purchase
+
+One purchase the agent has a use for: it buys a report of a wallet's recent USDC transfers from the merchant's paid API and answers a question from that data.
+
+```bash
+npm run cli buy                       # on Arc Testnet, reporting on the hot wallet
+npm run cli buy -- --address 0x…      # report on another wallet
+npm run cli buy -- --fake             # offline, with a sample wallet
+```
+
+- The steps are: quote, payment authorised by the guard, the merchant verifies the receipt onchain, the data is returned, the agent summarises the three largest transfers.
+- The data comes from the Arc Testnet explorer's API (`src/chain/activity.ts`). The RPC node only serves logs for about a thousand blocks per call, which is too little history.
+- The run counts as completed only if the report was delivered against a payment and the answer names the largest transfers in what was delivered.
+- The report page gets a "Paid API" tab with the payment link, the answer and every step. The same purchase is scenario `paid-api` in full runs, so `--all` has four honest scenarios.
+
 ### Integration checkpoints
 
 1. **One honest purchase onchain** — A's wallet, B's guard, C's agent, D's runner on H1.

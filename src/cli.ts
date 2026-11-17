@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { compareCommand, noGuardCommand, reportCommand, runCommand } from './redteam/commands.js';
+import { buyCommand, compareCommand, noGuardCommand, reportCommand, runCommand } from './redteam/commands.js';
 import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.js';
 
 /**
@@ -9,6 +9,7 @@ import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.
  *   run       — run red-team scenarios (--all | --scenario <id>) [--no-guard] [--compare] [--fake]
  *   no-guard  — shortcut for `run --all --no-guard`: the unprotected baseline
  *   compare   — shortcut for `run --all --compare`: guarded, then unguarded, side by side
+ *   buy       — one paid API purchase: buy a wallet's USDC activity report and answer from it [--address 0x…]
  *   refund    — return testnet USDC from the attacker and merchant to the hot wallet [--keep <usdc>] [--dry-run]
  *   report    — re-render the latest report [--html]
  */
@@ -20,6 +21,7 @@ const commands: Record<string, Command> = {
   run: (args) => runCommand(args),
   'no-guard': (args) => noGuardCommand(args),
   compare: (args) => compareCommand(args),
+  buy: (args) => buyCommand(args),
   refund: refundCommand,
   report: (args) => reportCommand(args),
 };
