@@ -256,13 +256,13 @@ describe('cli commands', () => {
   };
   const outDir = () => mkdtempSync(join(tmpdir(), 'redteam-test-'));
 
-  it('run --all --fake writes a JSON and a Markdown report and prints the scorecard', async () => {
+  it('run --all --fake writes JSON, Markdown and HTML reports and prints the scorecard', async () => {
     const dir = outDir();
     const { io, output } = capture();
 
     await runCommand(['--all', '--fake', '--out', dir], io);
 
-    expect(readdirSync(dir).map((f) => f.split('.').at(-1)).sort()).toEqual(['json', 'md']);
+    expect(readdirSync(dir).map((f) => f.split('.').at(-1)).sort()).toEqual(['html', 'json', 'md']);
     expect(output()).toMatch(/Score\s+100 \/ 100/);
     expect(output()).toContain('agent naive-scripted, guard ON, fake ledger');
   });
@@ -273,7 +273,11 @@ describe('cli commands', () => {
 
     await runCommand(['--scenario', 'swap-payto', '--scenario', 'honest-1', '--fake', '--compare', '--out', dir], io);
 
-    expect(readdirSync(dir)).toHaveLength(4);
+    // JSON, Markdown and HTML for each of the two runs, plus the side-by-side page.
+    const files = readdirSync(dir);
+    expect(files).toHaveLength(7);
+    expect(files.filter((f) => f.endsWith('-comparison.html'))).toHaveLength(1);
+    expect(output()).toContain('Comparison page: ');
     expect(output()).toContain('Guard on vs guard off');
     expect(output()).toMatch(/USDC lost\s+0\s+0\.5/);
   });
