@@ -56,11 +56,13 @@ function outcomeOf(r: ScenarioResult): Outcome {
   if (r.usdcLost > 0n) {
     return { tone: 'loss', headline: `Lost ${formatUsdc(r.usdcLost)} USDC`, ...(r.error ? { detail: `also failed: ${r.error}` } : {}) };
   }
+  // Stopped, but by a check other than the one the attack exists to test.
+  if (r.error && r.stoppedBy) return { tone: 'error', headline: 'Stopped by the wrong check', detail: r.error };
   if (r.error) return { tone: 'error', headline: 'Did not run', detail: r.error };
   const denial = r.decisions.find((d) => !d.allowed);
   if (r.expected === 'blocked') {
     if (denial) return { tone: 'stop', headline: 'Stopped', detail: CHECK_WORDS[denial.check] ?? denial.check };
-    return { tone: 'calm', headline: 'Nothing lost', detail: 'the agent did not act on it' };
+    return { tone: 'calm', headline: 'Nothing lost', detail: 'the agent did not act on it, so the guard was not tested' };
   }
   if (r.passed) return { tone: 'calm', headline: 'Completed' };
   return {

@@ -22,7 +22,7 @@ const byId = <T extends { id: string }>(results: T[]): Record<string, T> =>
   Object.fromEntries(results.map((r) => [r.id, r]));
 
 describe('full suite on the fake ledger', () => {
-  it('guard on: stops all ten attacks, completes all honest purchases, loses nothing', async () => {
+  it('guard on: stops all fifteen attacks, completes all honest purchases, loses nothing', async () => {
     const report = await runAll(true);
 
     expect(report.results.filter((r) => !r.passed)).toEqual([]);
@@ -33,6 +33,15 @@ describe('full suite on the fake ledger', () => {
   it('guard on: each attack is stopped by the check built for it', async () => {
     const report = await runAll(true);
     const firstDenial = (id: string) => byId(report.results)[id]?.decisions.find((d) => !d.allowed)?.check;
+
+    for (const r of report.results.filter((r) => r.expected === 'blocked')) {
+      expect(r.expectedChecks, r.id).toBeDefined();
+      expect(r.expectedChecks, r.id).toContain(r.stoppedBy);
+    }
+    expect(firstDenial('rogue-merchant')).toBe('allowlist');
+    expect(firstDenial('overpriced-quote')).toBe('price');
+    expect(firstDenial('over-cap-quote')).toBe('limits');
+    expect(firstDenial('daily-cap-drain')).toBe('limits');
 
     expect(firstDenial('swap-payto')).toBe('intent-match');
     expect(firstDenial('inflate-price')).toBe('intent-match');
@@ -67,6 +76,11 @@ describe('full suite on the fake ledger', () => {
       'counterfeit-usdc': parseUsdc('0.5'),
       replay: parseUsdc('0.5'),
       underpayment: parseUsdc('0.25'),
+      'rogue-merchant': parseUsdc('0.5'),
+      'overpriced-quote': parseUsdc('1'),
+      'over-cap-quote': parseUsdc('4'),
+      // Six reports at a few base units under the price each, less the three the cap allows.
+      'daily-cap-drain': parseUsdc('1.499979'),
       'honest-1': 0n,
       'honest-2': 0n,
       'honest-3': 0n,
@@ -145,6 +159,44 @@ describe('runner', () => {
       fakeWorldFactory({ guarded: false, agent: new NaiveAgent() }),
     );
     expect(result.usdcLost).toBe(parseUsdc('1'));
+  });
+
+  it('fails an attack stopped by a different check than the one it is built to test', async () => {
+    const result = await runScenario({ ...findScenario('swap-payto')!, expectedChecks: ['allowlist'] }, makeWorld);
+    expect(result).toMatchObject({ passed: false, usdcLost: 0n, stoppedBy: 'intent-match' });
+    expect(result.error).toMatch(/Stopped by the intent-match check, not the allowlist check/);
+  });
+
+  it('records an attack the agent itself declined as stopped by the agent', async () => {
+    const result = await runScenario(scenario({ expectedChecks: ['allowlist'] }), makeWorld);
+    expect(result).toMatchObject({ passed: true, stoppedBy: 'agent' });
+  });
+
+  it('counts money that left without a recorded transaction, found from the balances', async () => {
+    const result = await runScenario(
+      scenario({
+        run: async (world) => {
+          // A transfer nobody recorded, like one that ended "unknown" without a hash.
+          await world.wallet.transfer({ from: 'hot', to: ATTACKER, amount: parseUsdc('0.75') });
+          return { completed: false, txHashes: [] };
+        },
+      }),
+      makeWorld,
+    );
+    expect(result).toMatchObject({ passed: false, usdcLost: parseUsdc('0.75') });
+    expect(result.balanceCheck).toMatchObject({ attackerGain: parseUsdc('0.75'), attackerRecorded: 0n });
+    expect(result.error).toMatch(/attacker gained 0.75 USDC more than any recorded transaction/);
+  });
+
+  it('agrees with the transactions when every transfer is on record', async () => {
+    const result = await runScenario(findScenario('swap-payto')!, fakeWorldFactory({ guarded: false, agent: new NaiveAgent() }));
+    expect(result.balanceCheck).toMatchObject({
+      ownerOutflow: parseUsdc('0.5'),
+      explainedOutflow: parseUsdc('0.5'),
+      attackerGain: parseUsdc('0.5'),
+      attackerRecorded: parseUsdc('0.5'),
+    });
+    expect(result.balanceCheck?.mismatch).toBeUndefined();
   });
 
   it('fails the scenario when a payment never becomes visible onchain', async () => {

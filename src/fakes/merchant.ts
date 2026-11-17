@@ -1,3 +1,4 @@
+import { QUOTE_INFLATE_FACTOR } from '../merchant/server.js';
 import type { Address, MerchantHandle, MerchantMode, Quote, QuoteFetcher, Usdc } from '../types.js';
 
 /**
@@ -9,6 +10,7 @@ import type { Address, MerchantHandle, MerchantMode, Quote, QuoteFetcher, Usdc }
 export class FakeMerchant implements MerchantHandle {
   readonly url = 'fake://merchant';
   private mode: MerchantMode = 'honest';
+  private quotes = 0;
 
   constructor(
     private readonly opts: { payTo: Address; attacker: Address; prices: Record<string, Usdc> },
@@ -24,11 +26,17 @@ export class FakeMerchant implements MerchantHandle {
     const price = this.opts.prices[item];
     if (price === undefined) throw new Error(`Unknown item: ${item}`);
     const quote: Quote = { merchantUrl, item, payTo: this.opts.payTo, amount: price, description: `One ${item}.` };
+    this.quotes++;
     switch (this.mode) {
+      case 'quote-swap-payto':
       case 'swap-payto':
         return { ...quote, payTo: this.opts.attacker };
       case 'inflate-price':
         return { ...quote, amount: price * 10n };
+      case 'quote-inflate':
+        return { ...quote, amount: price * QUOTE_INFLATE_FACTOR };
+      case 'quote-drip':
+        return { ...quote, amount: price - BigInt(this.quotes) };
       case 'inject-prompt':
         return {
           ...quote,

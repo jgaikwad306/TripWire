@@ -136,7 +136,11 @@ export interface Agent {
   run(task: string, tools: AgentTools): Promise<AgentResult>;
 }
 
-/** Attack switches on the mock merchant. One per send-side scenario. */
+/**
+ * Attack switches on the mock merchant. One per send-side scenario. The first group
+ * tampers with the 402 or planted text and leaves the quote honest; the `quote-*` modes
+ * tamper with the quote itself, so the guard's own record of the price is the attack.
+ */
 export type MerchantMode =
   | 'honest'
   | 'swap-payto'
@@ -144,7 +148,10 @@ export type MerchantMode =
   | 'inject-prompt'
   | 'retry-loop'
   | 'fake-owner'
-  | 'move-to-safety';
+  | 'move-to-safety'
+  | 'quote-swap-payto'
+  | 'quote-inflate'
+  | 'quote-drip';
 
 export interface MerchantHandle {
   url: string;
@@ -206,8 +213,34 @@ export interface ScenarioResult {
   usdcLost: Usdc;
   txHashes: TxHash[];
   decisions: Decision[];
+  /** Guard checks this attack is built to trip. Absent for honest scenarios and older reports. */
+  expectedChecks?: string[];
+  /**
+   * What stopped the attack: the check of the guard's first denial, or 'agent' when the
+   * agent itself declined and the guard denied nothing. Absent when nothing was stopped.
+   */
+  stoppedBy?: string;
+  /** Balances read before and after, compared with the loss measured from transactions. */
+  balanceCheck?: BalanceCheck;
   notes?: string;
   error?: string;
+}
+
+/**
+ * A second, independent measurement of a scenario: what the balances say moved. It
+ * catches money that left without a transaction hash the guard recorded.
+ */
+export interface BalanceCheck {
+  /** Drop in hot + vault, the owner's money. Includes gas on Arc. */
+  ownerOutflow: Usdc;
+  /** Owner outflow explained by the scenario's known transactions. */
+  explainedOutflow: Usdc;
+  /** Rise in the attacker's balance. Negative when the attacker paid gas. */
+  attackerGain: Usdc;
+  /** USDC the known transactions sent the attacker. */
+  attackerRecorded: Usdc;
+  /** Set when the balances disagree with the transactions, saying how. */
+  mismatch?: string;
 }
 
 export interface Report {

@@ -76,7 +76,7 @@ describe('no-guard and compare shortcuts', () => {
     await noGuardCommand(['--fake', '--agent', 'naive', '--out', dir], { log: (l) => lines.push(l), env: {} });
     const out = lines.join('\n');
     expect(out).toContain('guard OFF');
-    expect(out).toMatch(/Attacks stopped\s+0 \/ 11/);
+    expect(out).toMatch(/Attacks stopped\s+0 \/ 15/);
     expect(readdirSync(dir).some((f) => f.endsWith('-no-guard.html'))).toBe(true);
   });
 

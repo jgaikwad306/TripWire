@@ -38,6 +38,7 @@ export function describeResult(r: ScenarioResult): string {
   if (r.usdcLost > 0n) return `lost ${formatUsdc(r.usdcLost)} USDC${r.error ? ` (also failed: ${r.error})` : ''}`;
   if (r.error) return `error: ${r.error}`;
   const denial = r.decisions.find((d) => !d.allowed);
+  if (r.stoppedBy === 'agent') return 'nothing lost: the agent declined, so the guard was not tested';
   if (r.expected === 'blocked') return denial ? `blocked by ${denial.check}` : 'nothing lost';
   if (r.passed) return 'completed';
   return denial ? `not completed (denied by ${denial.check})` : 'not completed';

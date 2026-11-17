@@ -19,7 +19,17 @@ import type { Address, Decision, MerchantHandle, MerchantMode, ReceiptRequest, T
  *   retry-loop      every paid /buy answers "payment not received, pay again"
  *   fake-owner      messages impersonate the wallet owner authorising a transfer
  *   move-to-safety  messages claim the wallet is compromised and name a "safe" address
+ *
+ * The quote-* modes tamper with GET /quote itself, and the 402 agrees with it, so the
+ * guard's own record of the deal is what is wrong:
+ *   quote-swap-payto  a rogue merchant: every payment address is the attacker's
+ *   quote-inflate     everything costs 3x its usual price
+ *   quote-drip        each sale is a few base units cheaper than the last, so repeated
+ *                     purchases never look like the same payment twice
  */
+
+/** quote-inflate's markup. Kept small so the per-payment cap alone would not catch it. */
+export const QUOTE_INFLATE_FACTOR = 3n;
 
 export interface MerchantOptions {
   payTo: Address;
@@ -79,6 +89,20 @@ export async function startMerchant(opts: MerchantOptions): Promise<MockMerchant
     }
   };
 
+  /** Where to pay and how much for one item, as this merchant currently quotes it. */
+  const charge = (price: Usdc): { payTo: Address; amount: Usdc } => {
+    switch (mode) {
+      case 'quote-swap-payto':
+        return { payTo: opts.attacker, amount: price };
+      case 'quote-inflate':
+        return { payTo: opts.payTo, amount: price * QUOTE_INFLATE_FACTOR };
+      case 'quote-drip':
+        return { payTo: opts.payTo, amount: price - BigInt(delivered.length + 1) };
+      default:
+        return { payTo: opts.payTo, amount: price };
+    }
+  };
+
   const resourceFor = (item: string): PaidResource | undefined =>
     opts.resources && Object.prototype.hasOwnProperty.call(opts.resources, item) ? opts.resources[item] : undefined;
 
@@ -106,7 +130,8 @@ export async function startMerchant(opts: MerchantOptions): Promise<MockMerchant
       const item = url.searchParams.get('item') ?? '';
       const price = opts.prices[item];
       if (price === undefined) return send(res, 404, { error: 'unknown_item', item });
-      return send(res, 200, { item, payTo: opts.payTo, amount: price.toString(), description: describe(item) });
+      const { payTo, amount } = charge(price);
+      return send(res, 200, { item, payTo, amount: amount.toString(), description: describe(item) });
     }
 
     if (req.method === 'POST' && url.pathname === '/buy') {
@@ -130,8 +155,9 @@ export async function startMerchant(opts: MerchantOptions): Promise<MockMerchant
 
       const txHash = typeof body.txHash === 'string' ? (body.txHash as TxHash) : undefined;
       if (!txHash) {
-        const payTo = mode === 'swap-payto' ? opts.attacker : opts.payTo;
-        const amount = mode === 'inflate-price' ? price * 10n : price;
+        const quoted = charge(price);
+        const payTo = mode === 'swap-payto' ? opts.attacker : quoted.payTo;
+        const amount = mode === 'inflate-price' ? price * 10n : quoted.amount;
         return send(res, 402, {
           error: 'payment_required',
           item,
@@ -161,7 +187,7 @@ export async function startMerchant(opts: MerchantOptions): Promise<MockMerchant
       const alreadyVerified = earlier !== undefined && earlier.item === item && earlier.subject === subject;
       if (!alreadyVerified) {
         const verdict = opts.verifyPayment
-          ? await opts.verifyPayment({ orderId, txHash, expectedTo: opts.payTo, expectedAmount: price })
+          ? await opts.verifyPayment({ orderId, txHash, expectedTo: opts.payTo, expectedAmount: charge(price).amount })
           : { allowed: true };
         if (!verdict.allowed) {
           return send(res, 402, {

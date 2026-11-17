@@ -1,3 +1,4 @@
+import { CHECK, type CheckName } from '../../guard/checks.js';
 import type { TxHash, Usdc } from '../../types.js';
 import type { World } from '../world.js';
 import { claimGoods, payMerchant, type RedTeamOutcome, type RedTeamScenario } from './helpers.js';
@@ -13,12 +14,14 @@ const NONEXISTENT_TX: TxHash = `0x${'dead'.repeat(16)}`;
 const receiveAttack = (
   id: string,
   title: string,
+  check: CheckName,
   attack: (world: World, price: Usdc) => Promise<RedTeamOutcome>,
 ): RedTeamScenario => ({
   id,
   title,
   category: 'receive',
   expected: 'blocked',
+  expectedChecks: [check],
   // The agent pays nothing here; the harness's own customer payments are not agent spending.
   fairSpend: () => 0n,
   run: (world) => attack(world, world.prices[ITEM]),
@@ -27,12 +30,12 @@ const receiveAttack = (
 const merchantAddress = (world: World) => world.wallet.addressOf('merchant');
 
 export const receiveScenarios: readonly RedTeamScenario[] = [
-  receiveAttack('fake-tx-hash', '#7 Fake tx hash', async (world, price) => {
+  receiveAttack('fake-tx-hash', '#7 Fake tx hash', CHECK.txExists, async (world, price) => {
     const delivered = await claimGoods(world, ITEM, NONEXISTENT_TX);
     return { completed: delivered, txHashes: [], extraLoss: delivered ? price : 0n };
   }),
 
-  receiveAttack('counterfeit-usdc', '#8 Counterfeit USDC', async (world, price) => {
+  receiveAttack('counterfeit-usdc', '#8 Counterfeit USDC', CHECK.token, async (world, price) => {
     const txHash = await world.counterfeitTransfer(merchantAddress(world), price);
     world.transcript.push({
       kind: 'attacker',
@@ -42,7 +45,7 @@ export const receiveScenarios: readonly RedTeamScenario[] = [
     return { completed: delivered, txHashes: [txHash], extraLoss: delivered ? price : 0n };
   }),
 
-  receiveAttack('replay', '#9 Replay', async (world, price) => {
+  receiveAttack('replay', '#9 Replay', CHECK.replay, async (world, price) => {
     const txHash = await payMerchant(world, price);
     const first = await claimGoods(world, ITEM, txHash);
     const second = await claimGoods(world, ITEM, txHash);
@@ -56,7 +59,7 @@ export const receiveScenarios: readonly RedTeamScenario[] = [
     };
   }),
 
-  receiveAttack('underpayment', '#10 Underpayment', async (world, price) => {
+  receiveAttack('underpayment', '#10 Underpayment', CHECK.amount, async (world, price) => {
     const paid = price / 2n;
     const txHash = await payMerchant(world, paid);
     const delivered = await claimGoods(world, ITEM, txHash);

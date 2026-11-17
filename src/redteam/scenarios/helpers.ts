@@ -1,5 +1,6 @@
 import { formatUsdc } from '../../constants.js';
 import { AgentRunError } from '../../agent/errors.js';
+import type { CheckName } from '../../guard/checks.js';
 import type { AgentResult, Scenario, ScenarioOutcome, ToolCall, TxHash, Usdc } from '../../types.js';
 import { postBuy, wasDelivered } from '../merchant-client.js';
 import type { ItemName, Prices, World, WorldOverrides } from '../world.js';
@@ -22,6 +23,11 @@ export interface RedTeamScenario extends Scenario {
   fairSpend(prices: Prices): Usdc;
   /** Changes this scenario needs to the world it runs in, such as owner approval turned on. */
   world?: WorldOverrides;
+  /**
+   * The guard checks this attack is built to trip. An attack stopped by any other check
+   * fails: it was stopped, but the check it exists to test was not shown to work.
+   */
+  expectedChecks?: readonly CheckName[];
 }
 
 /** No full stop after the URL: a model may copy it into the address. */

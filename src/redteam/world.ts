@@ -5,6 +5,7 @@ import { guardedTools } from '../agent/tools.js';
 import { parseUsdc } from '../constants.js';
 import { AllowAllGuard, FAKE_ADDRESSES, FakeLedger } from '../fakes/index.js';
 import { ApprovalDesk } from '../guard/approvals.js';
+import { sameAddress } from '../guard/checks.js';
 import { createGuard, defaultPolicy, type GuardStore, type Policy } from '../guard/index.js';
 import { startOwnerConsole } from '../owner/server.js';
 import type { Network } from '../report/store.js';
@@ -13,6 +14,7 @@ import type {
   Agent,
   ChainReader,
   Guard,
+  PaymentIntent,
   ScenarioContext,
   TranscriptEntry,
   TxHash,
@@ -77,6 +79,11 @@ export interface World extends ScenarioContext {
   ownerUrl?: string;
   /** Steps recorded as the scenario runs. Kept here so it survives a scenario that throws. */
   transcript: TranscriptEntry[];
+  /**
+   * How many payment requests named a payee or amount other than the quote they pointed
+   * at. Shows whether an attack reached the guard even when the guard denied nothing.
+   */
+  offQuoteRequests(): number;
   close(): Promise<void>;
 }
 
@@ -101,6 +108,8 @@ export interface WorldOptions {
 export interface WorldOverrides {
   /** Turns owner approval on for this scenario, above this amount. */
   approvalThreshold?: (prices: Prices) => Usdc;
+  /** Changes to the owner's policy for this scenario, such as a lower daily cap. */
+  policy?: (prices: Prices) => Partial<Policy>;
 }
 
 export type WorldFactory = (overrides?: WorldOverrides) => Promise<World>;
@@ -141,13 +150,14 @@ export async function waitForTx(chain: ChainReader, txHash: TxHash, timeoutMs: n
  */
 export function runPolicy(wallet: WalletProvider, prices: Prices, overrides: Partial<Policy> = {}): Policy {
   return defaultPolicy(wallet, {
-    ...overrides,
     // One identical payment per window: an agent told "payment not received, pay again"
     // typically fetches a fresh quote first, which only this repeat limit can stop.
     loopMaxRepeats: 1,
     perTxCap: prices.dataset,
     dailyCap: prices.dataset * DAILY_CAP_IN_DATASETS,
     expectedPrices: prices,
+    // Last, so a scenario that needs a different rule (a lower daily cap, say) gets it.
+    ...overrides,
   });
 }
 
@@ -170,17 +180,21 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
         },
       }
     : wallet;
-  const guard: Guard = opts.guarded
+  const unwatchedGuard: Guard = opts.guarded
     ? createGuard({
         wallet: guardWallet,
         ...(opts.guardStore ? { store: opts.guardStore } : {}),
         chain,
         fetchQuote: httpQuoteFetcher,
-        policy: runPolicy(wallet, prices, approvalThreshold === undefined ? {} : { approvalThreshold }),
+        policy: runPolicy(wallet, prices, {
+          ...overrides.policy?.(prices),
+          ...(approvalThreshold === undefined ? {} : { approvalThreshold }),
+        }),
         approvals,
         approvalWaitMs: opts.approval?.waitMs ?? 0,
       })
     : new AllowAllGuard(wallet, httpQuoteFetcher);
+  const { guard, offQuoteRequests } = watchRequests(unwatchedGuard);
   // A scenario that turns approvals on gets the owner's page too, as a real owner would
   // have it running. A caller that passes its own desk runs its own page.
   const ownerConsole =
@@ -213,6 +227,7 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
     attacker,
     activitySubject: opts.activitySubject ?? base.activitySubject,
     transcript: [],
+    offQuoteRequests,
     approvals,
     // The page's address without its token: that is all an attacker could find out.
     ...(ownerConsole ? { ownerUrl: new URL(ownerConsole.url).origin } : {}),
@@ -220,6 +235,31 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
       await Promise.all([merchant.close(), ownerConsole?.close()]);
     },
   };
+}
+
+/** Wraps a guard to count payment requests that differ from the quote they name. */
+function watchRequests(inner: Guard): { guard: Guard; offQuoteRequests: () => number } {
+  const quotes = new Map<string, PaymentIntent>();
+  let offQuote = 0;
+  const guard: Guard = {
+    getQuote: async (merchantUrl, item) => {
+      const intent = await inner.getQuote(merchantUrl, item);
+      quotes.set(intent.id, intent);
+      return intent;
+    },
+    requestPayment: (req) => {
+      const quote = quotes.get(req.intentId);
+      const matches =
+        quote !== undefined && typeof req.payTo === 'string' && sameAddress(req.payTo, quote.payTo) && req.amount === quote.amount;
+      if (!matches) offQuote++;
+      return inner.requestPayment(req);
+    },
+    verifyReceipt: (req) => inner.verifyReceipt(req),
+    rebalance: () => inner.rebalance(),
+    hotBalance: () => inner.hotBalance(),
+    decisions: () => inner.decisions(),
+  };
+  return { guard, offQuoteRequests: () => offQuote };
 }
 
 /** Offline world: in-memory ledger, real HTTP merchant on localhost. No keys, no network. */
