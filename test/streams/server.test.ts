@@ -97,9 +97,12 @@ describe('authenticated Stream destination and local control', () => {
   it('tests, creates paused, configures the destination, and activates idempotently', async () => {
     const { client, dir } = await setup(false);
     const calls: { path: string; method: string; body: Record<string, unknown> }[] = [];
+    let active = false;
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const path = new URL(String(url)).pathname;
       calls.push({ path, method: init!.method!, body: init!.body ? JSON.parse(String(init!.body)) : {} });
+      if (init!.method === 'GET') return Response.json({ id: 'stream-1', status: active ? 'active' : 'paused' });
+      if (path.endsWith('/activate')) active = true;
       return Response.json(path.endsWith('/test_filter') ? { logs: [], result: JSON.stringify(batch(block(20000))) } : { id: 'stream-1' });
     }) as typeof fetch;
     const opts = { client, directory: dir, key: 'test-provider-key', webhookUrl: 'https://example.com/webhooks/quicknode', backfillBlocks: 10_000, head: 20_000, fetchImpl };
@@ -112,6 +115,7 @@ describe('authenticated Stream destination and local control', () => {
     expect(calls.at(-1)!.path).toMatch(/activate$/);
     await provisionStream({ ...opts, head: 30_000 });
     expect(calls.filter(c => c.path.endsWith('/streams'))).toHaveLength(1);
+    expect(calls.filter(c => c.path.endsWith('/activate'))).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(dir, 'setup.json'), 'utf8')).liveBoundary).toBe(20_000);
   });
   it('does not leak credentials in provider errors or accept insecure destinations', async () => {
@@ -126,6 +130,7 @@ describe('authenticated Stream destination and local control', () => {
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       if (String(url).endsWith('/test_filter')) return Response.json({ result: JSON.stringify(batch(block(20000))) });
       if (String(url).endsWith('/activate')) return new Response(null, { status: 201 });
+      if (init!.method === 'GET') return Response.json({ id: 'trial-stream', status: 'paused' });
       const body = JSON.parse(String(init!.body)); requests.push(body);
       if (body.dataset_batch_size === 5) return Response.json({ message: 'Dataset batch size is greater than max batch size: 5 > 1' }, { status: 500 });
       return Response.json({ id: 'trial-stream' });

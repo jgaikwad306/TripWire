@@ -76,7 +76,9 @@ export async function provisionStream(opts: {
     await opts.client.request('/configure', config);
   }
   await configureProvider(`/streams/${encodeURIComponent(config.streamId)}`, 'PATCH', { filter_function: filter, destination_attributes: attributes, elastic_batch_enabled: true });
-  await call(`/streams/${encodeURIComponent(config.streamId)}/activate`, 'POST');
+  const current = await call(`/streams/${encodeURIComponent(config.streamId)}`, 'GET');
+  // Activating an already active Stream returns 422 on the real provider API.
+  if (current.status !== 'active') await call(`/streams/${encodeURIComponent(config.streamId)}/activate`, 'POST');
   return config;
 }
 
