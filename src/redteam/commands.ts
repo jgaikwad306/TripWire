@@ -1,10 +1,11 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { saveHtmlReport } from '../report/html.js';
 import { CAREFUL_SYSTEM_PROMPT, GrokAgent } from '../agent/grok.js';
 import { ARC_TESTNET, explorerTxUrl, formatUsdc, parseUsdc } from '../constants.js';
 import { ApprovalDesk } from '../guard/approvals.js';
+import { JsonFileGuardStore } from '../guard/store.js';
 import { startOwnerConsole } from '../owner/server.js';
 import { describeResult, renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
 import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, saveReport, type HoldSnapshot, type Parties, type SavedReport } from '../report/store.js';
@@ -34,7 +35,12 @@ Scenario ids: ${ALL_SCENARIOS.map((s) => s.id).join(', ')}`;
 export interface CommandIo {
   log: (line: string) => void;
   env: NodeJS.ProcessEnv;
+  /** Ends the process abruptly, for `buy --crash-after-send`. Tests replace it. */
+  crash?: () => void;
 }
+
+/** sysexits "internal software error": the process stopped on purpose, mid-purchase. */
+const CRASH_EXIT_CODE = 70;
 
 const defaultIo = (): CommandIo => ({ log: (line) => console.log(line), env: process.env });
 
@@ -131,13 +137,17 @@ async function runOnce(opts: {
   io: CommandIo;
   activitySubject?: Address;
   approval?: WorldOptions['approval'];
+  guardStore?: WorldOptions['guardStore'];
+  afterPaymentSent?: WorldOptions['afterPaymentSent'];
 }): Promise<SavedReport> {
-  const { scenarios, guarded, fake, agent, outDir, io, activitySubject, approval } = opts;
+  const { scenarios, guarded, fake, agent, outDir, io, activitySubject, approval, guardStore, afterPaymentSent } = opts;
   const worldOptions: WorldOptions = {
     guarded,
     agent,
     ...(activitySubject ? { activitySubject } : {}),
     ...(approval ? { approval } : {}),
+    ...(guardStore ? { guardStore } : {}),
+    ...(afterPaymentSent ? { afterPaymentSent } : {}),
   };
   const makeWorld = fake ? fakeWorldFactory(worldOptions) : liveWorldFactory(worldOptions, io.env);
   const { hold, parties } = await checkWorld(makeWorld, guarded, io);
@@ -249,6 +259,7 @@ export function comparablePair(a: SavedReport, b: SavedReport): { guarded: Saved
 }
 
 const DEFAULT_APPROVAL_WAIT_SECONDS = 120;
+const DEFAULT_STATE_FILE = '.data/guard-state.json';
 
 const BUY_USAGE =`Usage: npm run cli buy -- [options]
 
@@ -257,6 +268,9 @@ Buys a report of a wallet's recent USDC transfers from the paid API and answers 
   --address <0x…>     wallet to report on (default: the hot wallet; a sample wallet with --fake)
   --approve-above <usdc>  payments above this wait for you to approve them on a local page
   --approval-wait <s> how long a payment waits for your decision (default: ${DEFAULT_APPROVAL_WAIT_SECONDS})
+  --crash-after-send  stop the process right after the payment is sent, before the guard hears back
+  --resume            carry on after a crash: confirm the earlier payment and finish the purchase with it
+  --state <file>      where the guard keeps its state for those two (default: ${DEFAULT_STATE_FILE})
   --fake              offline: in-memory ledger instead of Arc Testnet
   --no-guard          baseline: approve every payment and receipt
   --agent <kind>      ${AGENT_KINDS.join(' | ')} (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
@@ -279,6 +293,9 @@ export async function buyCommand(args: string[], io: CommandIo = defaultIo()): P
       address: { type: 'string' },
       'approve-above': { type: 'string' },
       'approval-wait': { type: 'string', default: String(DEFAULT_APPROVAL_WAIT_SECONDS) },
+      'crash-after-send': { type: 'boolean', default: false },
+      resume: { type: 'boolean', default: false },
+      state: { type: 'string', default: DEFAULT_STATE_FILE },
       fake: { type: 'boolean', default: false },
       'no-guard': { type: 'boolean', default: false },
       agent: { type: 'string' },
@@ -300,6 +317,27 @@ export async function buyCommand(args: string[], io: CommandIo = defaultIo()): P
   if (threshold !== undefined && !guarded) {
     throw new Error('--approve-above needs the guard: without it nothing holds a payment for approval. Drop --no-guard.');
   }
+  const crashing = values['crash-after-send'];
+  const resuming = values.resume;
+  if (crashing && resuming) throw new Error('Use one of --crash-after-send and --resume, not both.');
+  if ((crashing || resuming) && !guarded) {
+    throw new Error('--crash-after-send and --resume need the guard: it is the guard that keeps the state. Drop --no-guard.');
+  }
+  if (resuming && !existsSync(values.state)) {
+    throw new Error(`Nothing to resume: there is no state file at ${values.state}. Run with --crash-after-send first.`);
+  }
+  // A crash demonstration starts clean, so an earlier run's payments do not count against it.
+  if (crashing) rmSync(values.state, { force: true });
+  const guardStore = crashing || resuming ? new JsonFileGuardStore(values.state) : undefined;
+  // Read once here so an unreadable state file is reported before anything else happens.
+  guardStore?.load();
+  const afterPaymentSent = crashing
+    ? (): void => {
+        io.log('\nSimulating a crash: the payment has been sent, and the process stops before the guard hears back.');
+        io.log('Run `npm run cli buy -- --resume` to carry on.');
+        (io.crash ?? (() => process.exit(CRASH_EXIT_CODE)))();
+      }
+    : undefined;
   const agent = createAgent(values.agent, io.env);
 
   // The owner's page runs for the length of the purchase. Its address carries the token
@@ -321,6 +359,8 @@ export async function buyCommand(args: string[], io: CommandIo = defaultIo()): P
       io,
       ...(activitySubject ? { activitySubject } : {}),
       ...(desk && threshold !== undefined ? { approval: { threshold, desk, waitMs: waitSeconds * 1000 } } : {}),
+      ...(guardStore ? { guardStore } : {}),
+      ...(afterPaymentSent ? { afterPaymentSent } : {}),
     });
   } finally {
     await owner?.close();

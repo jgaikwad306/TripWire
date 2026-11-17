@@ -14,7 +14,23 @@ export interface Spend {
 
 /** Quotes the guard fetched itself. A payment must reference one of these. */
 export class IntentStore {
-  private intents: ReadonlyMap<string, PaymentIntent> = new Map();
+  private intents: ReadonlyMap<string, PaymentIntent>;
+
+  /** Starts from intents recorded in an earlier session, if any. */
+  constructor(initial: readonly PaymentIntent[] = []) {
+    this.intents = new Map(initial.map((intent) => [intent.id, Object.freeze({ ...intent })]));
+  }
+
+  all(): PaymentIntent[] {
+    return [...this.intents.values()];
+  }
+
+  /** Makes an intent payable again, after a transfer for it definitely did not happen. */
+  reopen(id: string): void {
+    const intent = this.intents.get(id);
+    if (!intent) return;
+    this.intents = new Map(this.intents).set(id, Object.freeze({ ...intent, status: 'open' }));
+  }
 
   record(quote: Quote, now: number): PaymentIntent {
     const intent: PaymentIntent = Object.freeze({ ...quote, id: `intent-${randomUUID()}`, createdAt: now, status: 'open' });
@@ -43,7 +59,15 @@ export interface ReplayLedger {
 const normalize = (txHash: TxHash): string => txHash.toLowerCase();
 
 export class MemoryReplayLedger implements ReplayLedger {
-  private used: ReadonlySet<string> = new Set();
+  private used: ReadonlySet<string>;
+
+  constructor(initial: readonly string[] = []) {
+    this.used = new Set(initial.map((hash) => hash.toLowerCase()));
+  }
+
+  all(): string[] {
+    return [...this.used];
+  }
 
   has(txHash: TxHash): boolean {
     return this.used.has(normalize(txHash));

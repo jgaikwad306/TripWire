@@ -1,5 +1,6 @@
 import { initiateDeveloperControlledWalletsClient } from '@circle-fin/developer-controlled-wallets';
 import { ARC_TESTNET, USDC_ADDRESS, formatUsdc } from '../constants.js';
+import { TransferRejectedError } from '../errors.js';
 import type { Address, ChainReader, TxHash, Usdc, WalletProvider, WalletRole } from '../types.js';
 
 /** Roles backed by a Circle wallet. The attacker is a plain address we only watch. */
@@ -23,6 +24,8 @@ export interface CircleClientLike {
     amount: string[];
     destinationAddress: string;
     fee: { type: 'level'; config: { feeLevel: 'MEDIUM' } };
+    /** UUID v4. Circle treats a repeated key as the same request and returns the original response. */
+    idempotencyKey?: string;
   }): Promise<{ data?: { id: string } }>;
   getTransaction(input: {
     id: string;
@@ -70,9 +73,9 @@ export class CircleWallet implements WalletProvider {
     return this.chain.getUsdcBalance(this.addressOf(role));
   }
 
-  async transfer(args: { from: WalletRole; to: Address; amount: Usdc }): Promise<{ txHash: TxHash }> {
-    if (args.from === 'attacker') throw new Error('The attacker address is watch-only');
-    if (args.amount <= 0n) throw new Error('Amount must be positive');
+  async transfer(args: { from: WalletRole; to: Address; amount: Usdc; idempotencyKey?: string }): Promise<{ txHash: TxHash }> {
+    if (args.from === 'attacker') throw new TransferRejectedError('The attacker address is watch-only');
+    if (args.amount <= 0n) throw new TransferRejectedError('Amount must be positive');
 
     const created = await this.client.createTransaction({
       walletId: this.wallets[args.from].id,
@@ -81,6 +84,7 @@ export class CircleWallet implements WalletProvider {
       amount: [formatUsdc(args.amount)],
       destinationAddress: args.to,
       fee: { type: 'level', config: { feeLevel: 'MEDIUM' } },
+      ...(args.idempotencyKey ? { idempotencyKey: args.idempotencyKey } : {}),
     });
     const id = created.data?.id;
     if (!id) throw new Error('Circle did not return a transaction id');
@@ -93,7 +97,8 @@ export class CircleWallet implements WalletProvider {
     for (;;) {
       const tx = (await this.client.getTransaction({ id })).data?.transaction;
       if (tx && DEAD.has(tx.state)) {
-        throw new Error(`Circle transaction ${id} ${tx.state}${tx.errorReason ? `: ${tx.errorReason}` : ''}`);
+        // Circle says it will not happen: a definite answer, unlike a timeout.
+        throw new TransferRejectedError(`Circle transaction ${id} ${tx.state}${tx.errorReason ? `: ${tx.errorReason}` : ''}`);
       }
       if (tx && DONE.has(tx.state) && tx.txHash) return tx.txHash as TxHash;
       if (Date.now() >= deadline) {

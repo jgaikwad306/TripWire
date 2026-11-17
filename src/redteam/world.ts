@@ -5,7 +5,7 @@ import { guardedTools } from '../agent/tools.js';
 import { parseUsdc } from '../constants.js';
 import { AllowAllGuard, FAKE_ADDRESSES, FakeLedger } from '../fakes/index.js';
 import { ApprovalDesk } from '../guard/approvals.js';
-import { createGuard, defaultPolicy, type Policy } from '../guard/index.js';
+import { createGuard, defaultPolicy, type GuardStore, type Policy } from '../guard/index.js';
 import { startOwnerConsole } from '../owner/server.js';
 import type { Network } from '../report/store.js';
 import type {
@@ -88,6 +88,13 @@ export interface WorldOptions {
   activitySubject?: Address;
   /** Owner approval for the whole run: payments above `threshold` wait up to `waitMs` on `desk`. */
   approval?: { threshold: Usdc; desk: ApprovalDesk; waitMs: number };
+  /** Where the guard keeps its state. Defaults to memory, fresh for every scenario. */
+  guardStore?: GuardStore;
+  /**
+   * Called right after the guard's transfer to a payee has gone out and before the guard
+   * hears back. For demonstrating a process that dies at the worst possible moment.
+   */
+  afterPaymentSent?: () => void;
 }
 
 /** What one scenario needs changed about its world. */
@@ -149,9 +156,24 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
   const approvals = opts.approval?.desk ?? new ApprovalDesk();
   const approvalThreshold = opts.approval?.threshold ?? overrides.approvalThreshold?.(prices);
   // A new guard per scenario: spend history and loop counts must not carry over.
+  const afterPaymentSent = opts.afterPaymentSent;
+  const vault = wallet.addressOf('vault');
+  // Sweeps to the vault are not payments, so they never trigger the interruption.
+  const guardWallet: WalletProvider = afterPaymentSent
+    ? {
+        addressOf: (role) => wallet.addressOf(role),
+        getBalance: (role) => wallet.getBalance(role),
+        transfer: async (args) => {
+          const sent = await wallet.transfer(args);
+          if (args.to.toLowerCase() !== vault.toLowerCase()) afterPaymentSent();
+          return sent;
+        },
+      }
+    : wallet;
   const guard: Guard = opts.guarded
     ? createGuard({
-        wallet,
+        wallet: guardWallet,
+        ...(opts.guardStore ? { store: opts.guardStore } : {}),
         chain,
         fetchQuote: httpQuoteFetcher,
         policy: runPolicy(wallet, prices, approvalThreshold === undefined ? {} : { approvalThreshold }),

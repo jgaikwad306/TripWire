@@ -11,6 +11,7 @@ export const CHECK = {
   loop: 'loop',
   wallet: 'wallet',
   approval: 'approval',
+  reconcile: 'reconcile',
   // receive side
   recipient: 'recipient',
   chain: 'chain',

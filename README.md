@@ -208,6 +208,24 @@ npm run cli buy -- --approve-above 0.01    # prints the page's address; open it 
 - In a policy file the settings are `approvalThreshold` (USDC, absent means off) and `approvalTtlMs`.
 - Scenario `self-approval` (#11) has a hijacked agent ask for a payment above the threshold and then try to approve it through the page with its own HTTP tool. Full runs have eleven attacks.
 
+### Limits that survive restarts
+
+The guard can keep its state in a file, so a restart does not reset the limits and an interrupted purchase is not paid twice.
+
+```bash
+npm run cli buy -- --crash-after-send   # the process stops right after the payment is sent
+npm run cli buy -- --resume             # a new process confirms that payment and finishes the purchase
+```
+
+- Pass `store: new JsonFileGuardStore(path)` to `createGuard` (`src/guard/store.ts`). It holds recorded quotes, every payment with its state, and used receipt hashes. Saves are atomic, and a file that cannot be read stops the guard from starting.
+- A payment is written down as `reserved` before the transfer is attempted, then becomes `sent`, `failed` (the wallet definitely refused; released from the limits) or `unknown` (the money may have moved; still counted).
+- Every transfer goes out under an idempotency key. Before a new payment for the same order (item, payee, amount), an unfinished earlier one is sent again under its key: Circle returns the original transaction, so this can never pay twice. If it was sent and nobody received its transaction hash, the new request gets it. While the outcome cannot be confirmed, the new payment is denied with check `reconcile`.
+- `WalletProvider.transfer` in `src/types.ts` gained an optional `idempotencyKey` for this.
+- An unfinished payment is only sent again if its payee is still on the allowlist. Otherwise it stays unsettled and blocks that order.
+- Use one guard process per state file. Nothing locks the file, so two processes writing it at once would overwrite each other's records.
+- Owner approvals are not persisted: they are short-lived by design, so after a restart the owner is asked again.
+- Red-team runs keep the default in-memory store, fresh for every scenario. `--crash-after-send` starts from a clean state file (`.data/guard-state.json`, or `--state <file>`).
+
 ### Integration checkpoints
 
 1. **One honest purchase onchain** — A's wallet, B's guard, C's agent, D's runner on H1.

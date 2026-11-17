@@ -31,7 +31,7 @@ export function evaluateSend(req: PaymentRequest, state: SendState, policy: Poli
   return allow('All send checks passed.');
 }
 
-function checkIntentMatch(req: PaymentRequest, intent: PaymentIntent | undefined): Decision | null {
+export function checkIntentMatch(req: PaymentRequest, intent: PaymentIntent | undefined): Decision | null {
   if (!intent) {
     return deny(CHECK.intentMatch, 'No quote was recorded for this intent id. Get a quote first.');
   }
@@ -60,7 +60,7 @@ const checkPrice: Check = (intent, _state, policy) => {
   );
 };
 
-const normalizeItem = (item: string): string => item.trim().toLowerCase();
+export const normalizeItem = (item: string): string => item.trim().toLowerCase();
 
 /** Matches item names ignoring case and surrounding spaces, so "Report " still gets a price check. */
 function referencePrice(policy: Policy, item: string): Usdc | undefined {
