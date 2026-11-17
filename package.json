@@ -6,6 +6,10 @@
   "description": "Guarded stablecoin wallet for AI agents on Circle Arc, with a built-in red-team suite and safety score.",
   "scripts": {
     "cli": "tsx src/cli.ts",
+    "redteam": "tsx src/cli.ts run --all",
+    "no-guard": "tsx src/cli.ts no-guard",
+    "compare": "tsx src/cli.ts compare",
+    "refund": "tsx src/cli.ts refund",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

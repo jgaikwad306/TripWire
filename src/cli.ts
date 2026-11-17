@@ -1,15 +1,16 @@
 import 'dotenv/config';
-import { reportCommand, runCommand } from './redteam/commands.js';
-import { fakeUsdcCommand, setupCommand } from './wallet/commands.js';
+import { compareCommand, noGuardCommand, reportCommand, runCommand } from './redteam/commands.js';
+import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.js';
 
 /**
  * Entry point: `npm run cli <command>`.
- *   setup     — lane A: create Circle wallets on Arc Testnet / show balances [--test-transfer]
- *   fake-usdc — lane A: deploy the counterfeit token for the fake-USDC scenario
- *   run     — lane D: run red-team scenarios (--all | --scenario <id>) [--no-guard] [--fake]
- *   report  — lane D: re-render the latest report
- *
- * Each lane replaces its command's body; keep the dispatch table as is.
+ *   setup     — create Circle wallets on Arc Testnet / show balances [--test-transfer]
+ *   fake-usdc — deploy the counterfeit token for the fake-USDC scenario
+ *   run       — run red-team scenarios (--all | --scenario <id>) [--no-guard] [--compare] [--fake]
+ *   no-guard  — shortcut for `run --all --no-guard`: the unprotected baseline
+ *   compare   — shortcut for `run --all --compare`: guarded, then unguarded, side by side
+ *   refund    — return testnet USDC from the attacker and merchant to the hot wallet [--keep <usdc>] [--dry-run]
+ *   report    — re-render the latest report [--html]
  */
 type Command = (args: string[]) => Promise<void>;
 
@@ -17,6 +18,9 @@ const commands: Record<string, Command> = {
   setup: setupCommand,
   'fake-usdc': fakeUsdcCommand,
   run: (args) => runCommand(args),
+  'no-guard': (args) => noGuardCommand(args),
+  compare: (args) => compareCommand(args),
+  refund: refundCommand,
   report: (args) => reportCommand(args),
 };
 
