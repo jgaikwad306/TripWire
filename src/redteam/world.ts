@@ -1,14 +1,21 @@
 import { ExplorerActivityReader, buildActivityReport, type ActivityReader } from '../chain/activity.js';
+import { createArcClient } from '../chain/arc.js';
 import { httpQuoteFetcher } from '../merchant/quote.js';
 import { startMerchant, type MockMerchant } from '../merchant/server.js';
 import { guardedTools } from '../agent/tools.js';
 import { parseUsdc } from '../constants.js';
-import { AllowAllGuard, FAKE_ADDRESSES, FakeLedger } from '../fakes/index.js';
+import { AllowAllGuard, FAKE_TOKEN_ADDRESS, FakeLedger } from '../fakes/index.js';
+import { arcFacilitatorSigner } from '../x402/arc-signer.js';
+import { CircleFacilitator } from '../x402/circle.js';
+import { LocalFacilitator, type Facilitator } from '../x402/facilitator.js';
+import { FallbackFacilitator } from '../x402/fallback.js';
+import { HEADER } from '../x402/protocol.js';
 import { ApprovalDesk } from '../guard/approvals.js';
 import { sameAddress } from '../guard/checks.js';
 import { createGuard, defaultPolicy, type GuardStore, type Policy } from '../guard/index.js';
 import { startOwnerConsole } from '../owner/server.js';
 import type { Network } from '../report/store.js';
+import type { CircleWallet } from '../wallet/circle.js';
 import type {
   Address,
   Agent,
@@ -69,8 +76,10 @@ export interface World extends ScenarioContext {
   prices: Prices;
   /** How long to wait for a transaction to become visible on the chain reader. 0 offline. */
   settleMs: number;
-  /** A real, confirmed transfer of a lookalike token from the attacker. */
-  counterfeitTransfer(to: Address, amount: bigint): Promise<TxHash>;
+  /** A lookalike token that calls itself USDC, for counterfeit payments. */
+  counterfeitToken: Address;
+  /** Settles x402 payments made to the merchant. */
+  facilitator: Facilitator;
   /** The wallet the paid activity report is bought for. */
   activitySubject: Address;
   /** Requests put to the owner. Empty unless the run or the scenario turns approval on. */
@@ -98,11 +107,18 @@ export interface WorldOptions {
   /** Where the guard keeps its state. Defaults to memory, fresh for every scenario. */
   guardStore?: GuardStore;
   /**
-   * Called right after the guard's transfer to a payee has gone out and before the guard
-   * hears back. For demonstrating a process that dies at the worst possible moment.
+   * Called right after the merchant has answered the guard's signed payment (and so has
+   * settled it) and before the guard hears back. For demonstrating a process that dies at
+   * the worst possible moment.
    */
   afterPaymentSent?: () => void;
+  /** On Arc: which x402 facilitator settles payments. Default 'circle', falling back to 'local'. */
+  facilitator?: FacilitatorChoice;
+  /** Told when the run switches facilitator, e.g. because Circle's keyless trial ran out. */
+  onFacilitatorSwitch?: (reason: string) => void;
 }
+
+export type FacilitatorChoice = 'circle' | 'local';
 
 /** What one scenario needs changed about its world. */
 export interface WorldOverrides {
@@ -120,7 +136,8 @@ interface WorldBase {
   chain: ChainReader;
   prices: Prices;
   settleMs: number;
-  counterfeitTransfer(to: Address, amount: bigint): Promise<TxHash>;
+  counterfeitToken: Address;
+  facilitator: Facilitator;
   /** Where the merchant's activity report gets its data. */
   activity: ActivityReader;
   /** The wallet reported on unless the caller names another. */
@@ -167,25 +184,37 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
   const approvalThreshold = opts.approval?.threshold ?? overrides.approvalThreshold?.(prices);
   // A new guard per scenario: spend history and loop counts must not carry over.
   const afterPaymentSent = opts.afterPaymentSent;
-  const vault = wallet.addressOf('vault');
-  // Sweeps to the vault are not payments, so they never trigger the interruption.
-  const guardWallet: WalletProvider = afterPaymentSent
-    ? {
-        addressOf: (role) => wallet.addressOf(role),
-        getBalance: (role) => wallet.getBalance(role),
-        transfer: async (args) => {
-          const sent = await wallet.transfer(args);
-          if (args.to.toLowerCase() !== vault.toLowerCase()) afterPaymentSent();
-          return sent;
-        },
+  // A process that has died writes nothing more: once the crash fires, the guard's saves
+  // are dropped, so the state file says what it said at the moment of the crash.
+  let dead = false;
+  const guardStore: GuardStore | undefined =
+    opts.guardStore && afterPaymentSent
+      ? { load: () => opts.guardStore!.load(), save: (state) => (dead ? undefined : opts.guardStore!.save(state)) }
+      : opts.guardStore;
+  // Fires once the merchant has answered a signed payment: the money has moved, and the
+  // guard has not yet heard.
+  const guardFetch: typeof fetch = afterPaymentSent
+    ? async (input, init) => {
+        const res = await fetch(input, init);
+        if (new Headers(init?.headers).has(HEADER.signature)) {
+          dead = true;
+          afterPaymentSent();
+        }
+        return res;
       }
-    : wallet;
+    : fetch;
+  const guardDeps = (store?: GuardStore) => ({
+    wallet,
+    ...(store ? { store } : {}),
+    chain,
+    fetchQuote: httpQuoteFetcher,
+    facilitator: base.facilitator,
+    fetchImpl: guardFetch,
+    settleWaitMs: base.settleMs,
+  });
   const unwatchedGuard: Guard = opts.guarded
     ? createGuard({
-        wallet: guardWallet,
-        ...(opts.guardStore ? { store: opts.guardStore } : {}),
-        chain,
-        fetchQuote: httpQuoteFetcher,
+        ...guardDeps(guardStore),
         policy: runPolicy(wallet, prices, {
           ...overrides.policy?.(prices),
           ...(approvalThreshold === undefined ? {} : { approvalThreshold }),
@@ -193,8 +222,10 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
         approvals,
         approvalWaitMs: opts.approval?.waitMs ?? 0,
       })
-    : new AllowAllGuard(wallet, httpQuoteFetcher);
+    : new AllowAllGuard(wallet, httpQuoteFetcher, { facilitator: base.facilitator, chain, settleWaitMs: base.settleMs });
   const { guard, offQuoteRequests } = watchRequests(unwatchedGuard);
+  const merchantGuard =
+    opts.guarded && opts.guardStore ? createGuard({ ...guardDeps(), policy: runPolicy(wallet, prices) }) : undefined;
   // A scenario that turns approvals on gets the owner's page too, as a real owner would
   // have it running. A caller that passes its own desk runs its own page.
   const ownerConsole =
@@ -210,13 +241,10 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
         fetch: (subject) => buildActivityReport(base.activity, subject),
       },
     },
-    // The merchant side of the guard: check a payment proof before handing goods over.
-    verifyPayment: async (req) => {
-      // Give a just-confirmed payment time to appear before judging it. If the chain cannot
-      // be read at all, the guard's own check reports that, so the error is not handled here.
-      await waitForTx(chain, req.txHash, base.settleMs).catch(() => null);
-      return guard.verifyReceipt(req);
-    },
+    // The merchant side of the guard: check and settle a payment before handing goods over.
+    // With a state file, the guard is the buyer's and keeps the buyer's state; the merchant,
+    // another business, checks payments with a guard of its own.
+    acceptPayment: (req) => (merchantGuard ?? guard).acceptPayment(req),
   });
   return {
     ...base,
@@ -242,8 +270,8 @@ function watchRequests(inner: Guard): { guard: Guard; offQuoteRequests: () => nu
   const quotes = new Map<string, PaymentIntent>();
   let offQuote = 0;
   const guard: Guard = {
-    getQuote: async (merchantUrl, item) => {
-      const intent = await inner.getQuote(merchantUrl, item);
+    getQuote: async (merchantUrl, item, order) => {
+      const intent = await inner.getQuote(merchantUrl, item, order);
       quotes.set(intent.id, intent);
       return intent;
     },
@@ -254,7 +282,7 @@ function watchRequests(inner: Guard): { guard: Guard; offQuoteRequests: () => nu
       if (!matches) offQuote++;
       return inner.requestPayment(req);
     },
-    verifyReceipt: (req) => inner.verifyReceipt(req),
+    acceptPayment: (req) => inner.acceptPayment(req),
     rebalance: () => inner.rebalance(),
     hotBalance: () => inner.hotBalance(),
     decisions: () => inner.decisions(),
@@ -276,7 +304,9 @@ export function fakeWorldFactory(opts: WorldOptions): WorldFactory {
         activitySubject: FAKE_ACTIVITY_SUBJECT,
         prices: FAKE_PRICES,
         settleMs: 0,
-        counterfeitTransfer: async (to, amount) => ledger.counterfeitTransfer(FAKE_ADDRESSES.attacker, to, amount),
+        counterfeitToken: FAKE_TOKEN_ADDRESS,
+        // The official x402 facilitator, settling on the fake ledger.
+        facilitator: new LocalFacilitator(ledger.facilitatorSigner()),
       },
       opts,
       overrides,
@@ -290,11 +320,35 @@ const requireVar = (env: NodeJS.ProcessEnv, name: string, hint: string): string 
   return value;
 };
 
+/**
+ * Who settles x402 payments on Arc. Circle's Facilitator Service by default: the payee
+ * signs a seller proof, so no API key is needed during the keyless trial. When the trial
+ * for a payee runs out, payments go through our own facilitator: the official x402 code,
+ * submitting from the merchant's Circle wallet, which pays the gas.
+ */
+function liveFacilitator(wallet: CircleWallet, opts: WorldOptions): Facilitator {
+  const merchant = wallet.addressOf('merchant');
+  const local = new LocalFacilitator(
+    arcFacilitatorSigner(createArcClient(), merchant, (contract, callData) => wallet.execute('merchant', contract, callData)),
+  );
+  if (opts.facilitator === 'local') return local;
+  const circle = new CircleFacilitator((payTo, data) => {
+    // Only the payee can ask Circle to settle to it: the merchant, or the attacker it may be pretending to be.
+    const role = payTo.toLowerCase() === wallet.addressOf('attacker').toLowerCase() ? 'attacker' : 'merchant';
+    return wallet.signTypedData(role, data);
+  });
+  return new FallbackFacilitator(circle, local, (reason) =>
+    opts.onFacilitatorSwitch?.(`Switched to the in-repo x402 facilitator: ${reason}`),
+  );
+}
+
 /** Arc Testnet world: Circle wallets and the real chain, shared by every scenario. */
 export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = process.env): WorldFactory {
   // Loaded lazily so offline runs never touch the Circle SDK or the Solidity compiler.
   const walletLane = () => import('../wallet/index.js');
-  let live: Promise<{ wallet: WalletProvider; chain: ChainReader }> | undefined;
+  let live: Promise<{ wallet: CircleWallet; chain: ChainReader }> | undefined;
+  // One for the whole run, so a switch away from Circle's trial sticks.
+  let facilitator: Facilitator | undefined;
 
   return async (overrides) => {
     const lane = await walletLane();
@@ -310,13 +364,8 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
         activitySubject: wallet.addressOf('hot'),
         prices: LIVE_PRICES,
         settleMs: LIVE_SETTLE_MS,
-        counterfeitTransfer: (to, amount) =>
-          lane.sendCounterfeit({
-            privateKey: requireVar(env, 'ATTACKER_PRIVATE_KEY', 'Run `npm run cli setup` first.') as `0x${string}`,
-            token: requireVar(env, 'FAKE_USDC_ADDRESS', 'Run `npm run cli fake-usdc` first.') as Address,
-            to,
-            amount,
-          }),
+        counterfeitToken: requireVar(env, 'FAKE_USDC_ADDRESS', 'Run `npm run cli fake-usdc` first.').toLowerCase() as Address,
+        facilitator: (facilitator ??= liveFacilitator(wallet, opts)),
       },
       opts,
       overrides,

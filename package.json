@@ -14,11 +14,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "mutate": "vitest run test/redteam/mutation.test.ts",
-    "mutate": "vitest run test/redteam/mutation.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@circle-fin/developer-controlled-wallets": "^10.8.1",
+    "@x402/core": "2.29.0",
+    "@x402/evm": "2.29.0",
     "dotenv": "^16.4.5",
     "openai": "^4.77.0",
     "viem": "^2.21.0",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { USDC_ADDRESS, parseUsdc } from '../../src/constants.js';
 import { FakeLedger } from '../../src/fakes/index.js';
-import { CircleWallet, createWalletSet, loadWallets, type CircleClientLike } from '../../src/wallet/circle.js';
+import { CircleWallet, typedDataJson, createWalletSet, loadWallets, type CircleClientLike } from '../../src/wallet/circle.js';
 import { compileFakeUsdc } from '../../src/wallet/counterfeit.js';
 
 const WALLETS = {
@@ -29,6 +29,8 @@ function fakeClient(states: { state: string; txHash?: string; errorReason?: stri
       calls.push(input);
       return { data: { id: 'tx-1' } };
     },
+    signTypedData: async () => ({ data: { signature: '0xsigned' } }),
+    createContractExecutionTransaction: async () => ({ data: { id: 'tx-1' } }),
     getTransaction: async () => ({ data: { transaction: states[Math.min(i++, states.length - 1)] } }),
   };
   return { client, calls };
@@ -36,7 +38,8 @@ function fakeClient(states: { state: string; txHash?: string; errorReason?: stri
 
 const make = (states: Parameters<typeof fakeClient>[0], opts = { pollMs: 0, timeoutMs: 200 }) => {
   const { client, calls } = fakeClient(states);
-  const chain = new FakeLedger({ hot: parseUsdc('10') });
+  const chain = new FakeLedger();
+  chain.fund(WALLETS.hot.address, parseUsdc('10'));
   return { wallet: new CircleWallet(client, chain, WALLETS, ATTACKER, opts), calls };
 };
 
@@ -78,6 +81,27 @@ describe('CircleWallet', () => {
     expect(await wallet.getBalance('attacker')).toBe(0n);
     expect(wallet.addressOf('attacker')).toBe(ATTACKER);
     expect(wallet.addressOf('vault')).toBe(WALLETS.vault.address);
+  });
+});
+
+describe('Circle typed-data signing', () => {
+  it('sends EIP-712 data as JSON with the domain type spelled out and numbers as strings', () => {
+    const json = JSON.parse(
+      typedDataJson({
+        domain: { name: 'USDC', version: '2', chainId: 5042002, verifyingContract: '0x3600000000000000000000000000000000000000' },
+        types: { Ping: [{ name: 'value', type: 'uint256' }] },
+        primaryType: 'Ping',
+        message: { value: 10n },
+      }),
+    );
+    expect(json.types.EIP712Domain.map((f: { name: string }) => f.name)).toEqual(['name', 'version', 'chainId', 'verifyingContract']);
+    expect(json.message.value).toBe('10');
+  });
+
+  it('signs as a Circle wallet, and as the attacker only with its key', async () => {
+    const { wallet } = make([]);
+    expect(await wallet.signTypedData('hot', { domain: {}, types: {}, primaryType: 'X', message: {} })).toBe('0xsigned');
+    await expect(wallet.signTypedData('attacker', { domain: {}, types: {}, primaryType: 'X', message: {} })).rejects.toThrow(/watch-only/);
   });
 });
 

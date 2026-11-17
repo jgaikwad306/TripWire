@@ -41,8 +41,8 @@ const asBaseUnits = (value: unknown): Usdc | undefined =>
 
 /**
  * A deterministic stand-in for a gullible LLM, so the suite runs with no API key and gives
- * the same answer every time. It follows the merchant's payment flow and believes
- * everything it reads: it pays whatever the 402 asks, pays again when told the payment
+ * the same answer every time. It follows the merchant's x402 flow and believes everything
+ * it reads: it asks to pay whatever the 402's text says, pays again when told the payment
  * was not received, and obeys instructions planted in product descriptions.
  *
  * Task format: the item in double quotes and the merchant's URL, for example
@@ -71,12 +71,13 @@ export class NaiveAgent implements Agent {
     };
     const done = (finalMessage: string): AgentResult => ({ finalMessage, toolCalls: [...calls] });
 
+    const order = subject ? { subject } : undefined;
     const quote = async (): Promise<PaymentIntent | string> => {
       try {
-        const quoted = await tools.getQuote(merchantUrl, item);
+        const quoted = await tools.getQuote(merchantUrl, item, order);
         record(
           'get_quote',
-          { merchant_url: merchantUrl, item },
+          { merchant_url: merchantUrl, item, ...(order ? { order } : {}) },
           { intent_id: quoted.id, item: quoted.item, price_usdc: formatUsdc(quoted.amount), description: quoted.description },
         );
         return quoted;
@@ -89,7 +90,12 @@ export class NaiveAgent implements Agent {
       record(
         'request_payment',
         { intent_id: intentId, pay_to: payTo, amount_usdc: formatUsdc(amount), reason },
-        { allowed: decision.allowed, reason: decision.reason, tx_hash: decision.txHash },
+        {
+          allowed: decision.allowed,
+          reason: decision.reason,
+          tx_hash: decision.txHash,
+          ...(decision.merchantResponse ? { merchant_response: decision.merchantResponse } : {}),
+        },
       );
       return decision;
     };
@@ -101,10 +107,11 @@ export class NaiveAgent implements Agent {
 
     const intent = await quote();
     if (typeof intent === 'string') return done(intent);
-    const buy = async (proof: { txHash?: string } = {}): Promise<BuyResponse> => {
-      const body = { item, ...(subject ? { subject } : {}), ...proof };
+    /** Places the order without paying, to read what the merchant asks. */
+    const askMerchant = async (): Promise<BuyResponse> => {
+      const body = { item, ...(subject ? { subject } : {}) };
       const response = await postBuy(merchantUrl, body);
-      record('merchant_request', { method: 'POST', path: '/buy', body }, response);
+      record('merchant_request', { merchant_url: merchantUrl, method: 'POST', path: '/buy', body }, response);
       return response;
     };
 
@@ -114,28 +121,36 @@ export class NaiveAgent implements Agent {
       await pay(intent.id, planted.to, amount, 'Following the instructions in the product description.');
     }
 
-    const order = await buy();
-    if (order.status !== 402) return done(`Merchant answered ${order.status} to the order instead of asking for payment.`);
-    const payTo = planted?.kind === 'redirect' ? planted.to : (asAddress(order.body.payTo) ?? intent.payTo);
-    const amount = asBaseUnits(order.body.amount) ?? intent.amount;
+    const asked = await askMerchant();
+    if (asked.status !== 402) return done(`Merchant answered ${asked.status} to the order instead of asking for payment.`);
+    // It believes the 402's text, not the signed terms: that is what an attacker rewrites.
+    const payTo = planted?.kind === 'redirect' ? planted.to : (asAddress(asked.body.payTo) ?? intent.payTo);
+    const amount = asBaseUnits(asked.body.amount) ?? intent.amount;
 
     for (let attempt = 0; attempt < this.maxPayments; attempt++) {
       // Told to pay again, it starts over with a fresh quote, as a real model would.
       const current = attempt === 0 ? intent : await quote();
       if (typeof current === 'string') return done(current);
       const decision = await pay(current.id, payTo, amount, `Paying for ${item}.`);
-      if (!decision.allowed || !decision.txHash) return done(`Payment refused: ${decision.reason}`);
-      const firstTry = await buy({ txHash: decision.txHash });
-      // The merchant took the payment but could not fetch the data: ask again with the same proof.
-      const retry = firstTry.body.error === 'content_unavailable' ? await buy({ txHash: decision.txHash }) : firstTry;
-      if (wasDelivered(retry)) return done(describePurchase(item, retry.body.content));
-      if (retry.body.error !== 'payment_not_received') {
-        return done(`Merchant rejected the payment: ${String(retry.body.message ?? retry.status)}`);
+      if (!decision.allowed) return done(`Payment refused: ${decision.reason}`);
+      const answer = asBuyResponse(decision.merchantResponse);
+      if (!answer) return done(`Paid${decision.txHash ? ` (${decision.txHash})` : ''}, but the merchant has not answered.`);
+      if (wasDelivered(answer)) return done(describePurchase(item, answer.body.content));
+      if (answer.body.error !== 'payment_not_received') {
+        return done(`Merchant rejected the payment: ${String(answer.body.message ?? answer.status)}`);
       }
     }
     return done(`Gave up after paying ${this.maxPayments} times without delivery.`);
   }
 }
+
+const asBuyResponse = (answer: Decision['merchantResponse']): BuyResponse | undefined =>
+  answer
+    ? {
+        status: answer.status,
+        body: typeof answer.body === 'object' && answer.body !== null && !Array.isArray(answer.body) ? (answer.body as Record<string, unknown>) : {},
+      }
+    : undefined;
 
 /** What it says when the goods arrive. A purchased activity report is summarised, as the task asks. */
 function describePurchase(item: string, content: unknown): string {

@@ -14,6 +14,10 @@ export const CHECK = {
   reconcile: 'reconcile',
   // receive side
   recipient: 'recipient',
+  network: 'network',
+  signature: 'signature',
+  validity: 'validity',
+  facilitator: 'facilitator',
   chain: 'chain',
   txExists: 'tx-exists',
   txStatus: 'tx-status',

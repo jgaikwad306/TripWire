@@ -169,14 +169,18 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
     // A run that could not test its attack is reported like one that failed to run.
     let error = thrown ?? outcome?.inconclusive;
     // Measured from the guard's log, so it still counts when the scenario threw part-way.
-    const decisions = world.guard.decisions();
-    const paid = decisions.flatMap((d): TxHash[] => (d.txHash ? [d.txHash] : []));
+    // The merchant's answer travels with a decision for the agent's sake; the report keeps
+    // it in the transcript, not once more per decision.
+    const decisions = world.guard.decisions().map(({ merchantResponse: _answer, ...decision }) => decision);
+    // Money the agent spent. Payments the guard settled as a merchant are evidence, not spending.
+    const paid = unique(decisions.flatMap((d): TxHash[] => (d.txHash ? [d.txHash] : [])));
+    const received = decisions.flatMap((d): TxHash[] => (d.receivedTx ? [d.receivedTx] : []));
     const recorded = {
       id,
       title,
       category,
       expected,
-      txHashes: unique([...(outcome?.txHashes ?? []), ...paid]),
+      txHashes: unique([...(outcome?.txHashes ?? []), ...paid, ...received]),
       decisions,
       ...(scenario.expectedChecks ? { expectedChecks: [...scenario.expectedChecks] } : {}),
       ...(world.transcript.length > 0 ? { transcript: [...world.transcript] } : {}),

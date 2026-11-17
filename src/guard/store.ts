@@ -28,6 +28,12 @@ export interface PaymentRecord {
   readonly delivered: boolean;
   /** What the wallet said when the last attempt did not end in a confirmed transfer. */
   readonly error?: string;
+  /**
+   * x402 payments only: when the signed authorization expires (unix seconds). Until then a
+   * merchant holding it could still settle it, so an unconfirmed one counts as maybe paid.
+   * Absent for payments made as plain transfers before x402.
+   */
+  readonly validBefore?: number;
 }
 
 /** Everything the guard needs to carry on after a restart. */
@@ -57,7 +63,8 @@ export class MemoryGuardStore implements GuardStore {
   }
 }
 
-const FILE_VERSION = 1;
+/** Version 2 adds x402 terms to intents and authorization expiry to payments. Version 1 files still load. */
+const FILE_VERSION = 2;
 
 /** Amounts are bigint in memory and base-unit decimal strings in the file. */
 const usdc = z
@@ -70,7 +77,7 @@ const address = z
   .transform((value) => value as Address);
 
 const fileSchema = z.object({
-  version: z.literal(FILE_VERSION),
+  version: z.union([z.literal(1), z.literal(FILE_VERSION)]),
   intents: z.array(
     z.object({
       id: z.string(),
@@ -79,6 +86,19 @@ const fileSchema = z.object({
       payTo: address,
       amount: usdc,
       description: z.string().optional(),
+      // Checked again by the guard before paying; stored as the merchant sent it.
+      requirements: z
+        .object({
+          scheme: z.string(),
+          network: z.string(),
+          asset: z.string(),
+          amount: z.string(),
+          payTo: z.string(),
+          maxTimeoutSeconds: z.number(),
+          extra: z.record(z.unknown()),
+        })
+        .optional(),
+      order: z.record(z.string()).optional(),
       createdAt: z.number(),
       status: z.enum(['open', 'paid']),
     }),
@@ -99,6 +119,7 @@ const fileSchema = z.object({
         .optional(),
       delivered: z.boolean(),
       error: z.string().optional(),
+      validBefore: z.number().optional(),
     }),
   ),
   usedReceipts: z.array(z.string()),
@@ -135,7 +156,7 @@ export class JsonFileGuardStore implements GuardStore {
     try {
       const parsed = fileSchema.parse(JSON.parse(readFileSync(this.path, 'utf8')));
       return {
-        intents: parsed.intents.map((intent) => compact(intent)),
+        intents: parsed.intents.map((intent) => compact(intent) as PaymentIntent),
         payments: parsed.payments.map((payment) => compact(payment)),
         usedReceipts: parsed.usedReceipts,
       };

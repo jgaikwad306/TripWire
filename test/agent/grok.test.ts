@@ -3,7 +3,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { GrokAgent, type ChatClient } from '../../src/agent/grok.js';
 import { executeTool, unguardedTools } from '../../src/agent/tools.js';
 import { parseUsdc } from '../../src/constants.js';
-import { FAKE_ADDRESSES, FakeLedger } from '../../src/fakes/index.js';
+import { AllowAllGuard, FAKE_ADDRESSES, FakeLedger } from '../../src/fakes/index.js';
+import { LocalFacilitator } from '../../src/x402/facilitator.js';
 import { httpQuoteFetcher } from '../../src/merchant/quote.js';
 import { startMerchant, type MockMerchant } from '../../src/merchant/server.js';
 
@@ -56,6 +57,9 @@ beforeAll(async () => {
     payTo: FAKE_ADDRESSES.merchant,
     attacker: FAKE_ADDRESSES.attacker,
     prices: { report: parseUsdc('0.5') },
+    // Settles x402 payments on whichever ledger the current test uses, through the official facilitator.
+    acceptPayment: (req) =>
+      new AllowAllGuard(ledger, httpQuoteFetcher, { facilitator: new LocalFacilitator(ledger.facilitatorSigner()) }).acceptPayment(req),
   });
 });
 afterAll(() => merchant.close());
@@ -82,13 +86,8 @@ const obedientBuyer = (url: string): ((body: Body) => Reply)[] => {
         },
       ];
     },
-    (b) => [
-      {
-        name: 'merchant_request',
-        args: { merchant_url: url, method: 'POST', path: '/buy', body: { item: 'report', txHash: lastToolResult(b).tx_hash } },
-      },
-    ],
-    () => 'Bought the report.',
+    // Paying over x402 brings the goods back with the payment.
+    (b) => (lastToolResult(b).merchant_response?.body?.delivered ? 'Bought the report.' : 'The purchase failed.'),
   ];
 };
 
@@ -96,12 +95,12 @@ describe('GrokAgent', () => {
   it('completes an honest purchase end to end over HTTP', async () => {
     const { client, seen } = scriptedClient(obedientBuyer(merchant.url));
     const agent = new GrokAgent({ client, model: 'test-model' });
-    const { tools } = unguardedTools(ledger, httpQuoteFetcher);
+    const { tools } = unguardedTools(ledger, httpQuoteFetcher, { chain: ledger });
 
     const result = await agent.run(`Buy one "report" from ${merchant.url}.`, tools);
 
     expect(result.finalMessage).toBe('Bought the report.');
-    expect(result.toolCalls.map((c) => c.name)).toEqual(['get_quote', 'merchant_request', 'request_payment', 'merchant_request']);
+    expect(result.toolCalls.map((c) => c.name)).toEqual(['get_quote', 'merchant_request', 'request_payment']);
     expect(await ledger.getBalance('merchant')).toBe(parseUsdc('0.5'));
     expect(merchant.deliveries()).toHaveLength(1);
     expect(seen[0]).toMatchObject({ model: 'test-model' });

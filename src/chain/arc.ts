@@ -21,7 +21,15 @@ export const arcTestnet = defineChain({
 
 /** keccak256("Transfer(address,address,uint256)") */
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-const erc20Abi = parseAbi(['function balanceOf(address) view returns (uint256)']);
+const erc20Abi = parseAbi([
+  'function balanceOf(address) view returns (uint256)',
+  'function authorizationState(address authorizer, bytes32 nonce) view returns (bool)',
+  'event AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce)',
+]);
+/** Public Arc nodes refuse log queries over 10,000 blocks, so the search goes back in windows. */
+const LOG_WINDOW_BLOCKS = 5_000n;
+/** About 14 hours of Arc blocks: far longer than an x402 authorization stays valid. */
+const LOG_WINDOWS = 10;
 const TX_HASH = /^0x[0-9a-fA-F]{64}$/;
 
 export function createArcClient(rpcUrl: string = process.env.ARC_RPC_URL || ARC_TESTNET.defaultRpcUrl): PublicClient {
@@ -63,6 +71,30 @@ export class ArcChainReader implements ChainReader {
       confirmations: Math.max(1, Number(head - receipt.blockNumber) + 1),
       transfers,
     };
+  }
+
+  async authorizationUsed(authorizer: Address, nonce: `0x${string}`): Promise<{ used: boolean; txHash?: TxHash }> {
+    const used = await this.client.readContract({
+      address: USDC_ADDRESS,
+      abi: erc20Abi,
+      functionName: 'authorizationState',
+      args: [authorizer, nonce],
+    });
+    if (!used) return { used: false };
+    // The state says it is used; the event says by which transaction. A node that has
+    // pruned the logs still gives a definite "used".
+    let toBlock = await this.client.getBlockNumber({ cacheTime: 0 });
+    for (let window = 0; window < LOG_WINDOWS && toBlock >= 0n; window++) {
+      const fromBlock = toBlock >= LOG_WINDOW_BLOCKS ? toBlock - LOG_WINDOW_BLOCKS + 1n : 0n;
+      const logs = await this.client
+        .getContractEvents({ address: USDC_ADDRESS, abi: erc20Abi, eventName: 'AuthorizationUsed', args: { authorizer, nonce }, fromBlock, toBlock })
+        .catch(() => []);
+      const txHash = logs[0]?.transactionHash;
+      if (txHash) return { used: true, txHash: txHash as TxHash };
+      if (fromBlock === 0n) break;
+      toBlock = fromBlock - 1n;
+    }
+    return { used: true };
   }
 
   async getUsdcBalance(address: Address): Promise<Usdc> {

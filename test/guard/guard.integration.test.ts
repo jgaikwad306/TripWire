@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { parseUsdc } from '../../src/constants.js';
-import { FAKE_ADDRESSES, FakeLedger } from '../../src/fakes/index.js';
+import { FAKE_ADDRESSES, FAKE_TOKEN_ADDRESS, FakeLedger } from '../../src/fakes/index.js';
 import { CHECK } from '../../src/guard/checks.js';
 import { excessOverCap } from '../../src/guard/hold.js';
 import { createGuard } from '../../src/guard/index.js';
 import { defaultPolicy } from '../../src/guard/policy.js';
 import type { Address, Quote, WalletProvider, WalletRole } from '../../src/types.js';
-import { ATTACKER, CUSTOMER, MERCHANT, guardedWorld } from './helpers.js';
+import { LocalFacilitator } from '../../src/x402/facilitator.js';
+import { exactRequirements, type PaymentPayload } from '../../src/x402/protocol.js';
+import { ATTACKER, CUSTOMER, MERCHANT, customerPayment, guardedWorld } from './helpers.js';
 
 const buy = (ctx: ReturnType<typeof guardedWorld>, item = 'report') =>
   ctx.agent.run(`buy ${item} from ${ctx.merchant.url}`, ctx.tools);
@@ -158,6 +160,7 @@ describe('guard: send side against the fake world', () => {
 describe('guard: quote validation and wallet failures', () => {
   const ledger = () => new FakeLedger({ vault: parseUsdc('100'), hot: parseUsdc('10') });
   const goodQuote: Quote = { merchantUrl: 'fake://m', item: 'report', payTo: MERCHANT, amount: parseUsdc('0.5') };
+  const TERMS = exactRequirements(MERCHANT, parseUsdc('2'));
 
   const guardWith = (wallet: WalletProvider, quote: unknown, chain = ledger()) =>
     createGuard({ wallet, chain, fetchQuote: async () => quote as Quote, policy: defaultPolicy(wallet) });
@@ -193,17 +196,16 @@ describe('guard: quote validation and wallet failures', () => {
     const guard = guardWith(world, goodQuote, world);
 
     const payment = await guard.requestPayment(null as never);
-    const receipt = await guard.verifyReceipt({ orderId: 'o', txHash: 7, expectedTo: MERCHANT, expectedAmount: 1n } as never);
-    const stringAmount = await guard.verifyReceipt({
+    const noPayload = await guard.acceptPayment({ orderId: 'o', payload: 7, requirements: TERMS } as never);
+    const badAmount = await guard.acceptPayment({
       orderId: 'o',
-      txHash: world.transferFrom(FAKE_ADDRESSES.hot, MERCHANT, 1n),
-      expectedTo: MERCHANT,
-      expectedAmount: 'abc',
-    } as never);
+      payload: await customerPayment(TERMS),
+      requirements: { ...TERMS, amount: 'abc' },
+    });
 
     expect(payment).toMatchObject({ allowed: false, check: CHECK.intentMatch });
-    expect(receipt.allowed).toBe(false);
-    expect(stringAmount).toMatchObject({ allowed: false, check: CHECK.amount });
+    expect(noPayload.allowed).toBe(false);
+    expect(badAmount).toMatchObject({ allowed: false, check: CHECK.amount });
     expect(guard.decisions()).toHaveLength(3);
   });
 
@@ -222,21 +224,22 @@ describe('guard: quote validation and wallet failures', () => {
     }
   });
 
-  it('rejects a receipt it cannot record in the replay ledger', async () => {
+  it('refuses a payment it cannot record in the replay ledger, before settling it', async () => {
     const world = ledger();
     world.fund(CUSTOMER, parseUsdc('5'));
     const guard = createGuard({
       wallet: world,
       chain: world,
       fetchQuote: async () => goodQuote,
+      facilitator: new LocalFacilitator(world.facilitatorSigner()),
       policy: defaultPolicy(world),
       replayLedger: { has: () => false, add: () => { throw new Error('disk full'); } },
     });
-    const txHash = world.transferFrom(CUSTOMER, MERCHANT, parseUsdc('2'));
 
-    const decision = await guard.verifyReceipt({ orderId: 'o', txHash, expectedTo: MERCHANT, expectedAmount: parseUsdc('2') });
+    const decision = await guard.acceptPayment({ orderId: 'o', payload: await customerPayment(TERMS), requirements: TERMS });
 
     expect(decision).toMatchObject({ allowed: false, check: CHECK.replay });
+    expect(await world.getBalance('merchant')).toBe(0n);
   });
 
   it('settles a transfer whose outcome was unknown before paying for that order again', async () => {
@@ -245,6 +248,7 @@ describe('guard: quote validation and wallet failures', () => {
     const flaky: WalletProvider = {
       addressOf: (role) => real.addressOf(role),
       getBalance: (role) => real.getBalance(role),
+      signTypedData: (role, data) => real.signTypedData(role, data),
       transfer: async (args) => {
         if (failing) throw new Error('Circle API timeout');
         return real.transfer(args);
@@ -272,83 +276,113 @@ describe('guard: quote validation and wallet failures', () => {
   });
 });
 
-describe('guard: receive side against the fake world', () => {
+describe('guard: receive side against the fake world (x402)', () => {
   const PRICE = parseUsdc('2');
+  const terms = exactRequirements(MERCHANT, PRICE);
 
   const world = () => {
     const ctx = guardedWorld();
     ctx.ledger.fund(CUSTOMER, parseUsdc('10'));
     return ctx;
   };
-  const receipt = (txHash: Address, orderId = 'order-1') => ({ orderId, txHash, expectedTo: MERCHANT, expectedAmount: PRICE });
+  const accept = (ctx: ReturnType<typeof world>, payload: PaymentPayload, orderId = 'order-1', requirements = terms) =>
+    ctx.guard.acceptPayment({ orderId, payload, requirements });
 
-  it('accepts a real payment', async () => {
+  it('settles a real payment through the facilitator and confirms it onchain', async () => {
     const ctx = world();
-    const txHash = ctx.ledger.transferFrom(CUSTOMER, MERCHANT, PRICE);
-    expect(await ctx.guard.verifyReceipt(receipt(txHash))).toMatchObject({ allowed: true, check: CHECK.ok });
+    const decision = await accept(ctx, await customerPayment(terms));
+
+    expect(decision).toMatchObject({ allowed: true, check: CHECK.ok });
+    expect(await ctx.wallet.getBalance('merchant')).toBe(PRICE);
+    expect((await ctx.chain.getTx(decision.receivedTx!))?.transfers).toEqual([
+      expect.objectContaining({ from: CUSTOMER, to: MERCHANT, value: PRICE }),
+    ]);
+    // Received money is not money the guard spent.
+    expect(decision.txHash).toBeUndefined();
   });
 
-  it('rejects a nonexistent transaction hash', async () => {
+  it('rejects a payment signed by someone other than the payer', async () => {
     const ctx = world();
-    const decision = await ctx.guard.verifyReceipt(receipt(ctx.ledger.nonexistentTxHash()));
-    expect(decision).toMatchObject({ allowed: false, check: CHECK.txExists });
+    const forged = await customerPayment(terms, { sign: (data) => ctx.ledger.signTypedData('attacker', data) });
+    expect(await accept(ctx, forged)).toMatchObject({ allowed: false, check: CHECK.signature });
+    expect(await ctx.wallet.getBalance('merchant')).toBe(0n);
   });
 
-  it('rejects counterfeit USDC', async () => {
+  it('rejects a payment in counterfeit USDC', async () => {
     const ctx = world();
-    const txHash = ctx.ledger.counterfeitTransfer(CUSTOMER, MERCHANT, PRICE);
-    expect(await ctx.guard.verifyReceipt(receipt(txHash))).toMatchObject({ allowed: false, check: CHECK.token });
+    const fake = exactRequirements(MERCHANT, PRICE, FAKE_TOKEN_ADDRESS);
+    expect(await accept(ctx, await customerPayment(fake))).toMatchObject({ allowed: false, check: CHECK.token });
   });
 
-  it('rejects an underpayment', async () => {
+  it('rejects an underpayment, even when the payer rewrites the terms it echoes', async () => {
     const ctx = world();
-    const txHash = ctx.ledger.transferFrom(CUSTOMER, MERCHANT, PRICE - 1n);
-    expect(await ctx.guard.verifyReceipt(receipt(txHash))).toMatchObject({ allowed: false, check: CHECK.amount });
+    const under = await customerPayment({ ...terms, amount: (PRICE - 1n).toString() });
+    expect(await accept(ctx, under)).toMatchObject({ allowed: false, check: CHECK.amount });
   });
 
-  it('rejects a replayed transaction for a second order', async () => {
+  it('rejects an expired authorization', async () => {
     const ctx = world();
-    const txHash = ctx.ledger.transferFrom(CUSTOMER, MERCHANT, PRICE);
+    const stale = await customerPayment(terms, { validBefore: Math.floor(Date.now() / 1000) - 1 });
+    expect(await accept(ctx, stale)).toMatchObject({ allowed: false, check: CHECK.validity });
+  });
 
-    const first = await ctx.guard.verifyReceipt(receipt(txHash, 'order-1'));
-    const second = await ctx.guard.verifyReceipt(receipt(txHash, 'order-2'));
+  it('rejects a replayed authorization for a second order', async () => {
+    const ctx = world();
+    const payload = await customerPayment(terms);
+
+    const first = await accept(ctx, payload, 'order-1');
+    const second = await accept(ctx, payload, 'order-2');
 
     expect(first.allowed).toBe(true);
     expect(second).toMatchObject({ allowed: false, check: CHECK.replay });
+    expect(await ctx.wallet.getBalance('merchant')).toBe(PRICE);
   });
 
-  it('accepts one of two parallel claims on the same transaction', async () => {
+  it('accepts one of two parallel claims with the same authorization', async () => {
     const ctx = world();
-    const txHash = ctx.ledger.transferFrom(CUSTOMER, MERCHANT, PRICE);
-
-    const decisions = await Promise.all([
-      ctx.guard.verifyReceipt(receipt(txHash, 'order-1')),
-      ctx.guard.verifyReceipt(receipt(txHash, 'order-2')),
-    ]);
-
+    const payload = await customerPayment(terms);
+    const decisions = await Promise.all([accept(ctx, payload, 'order-1'), accept(ctx, payload, 'order-2')]);
     expect(decisions.filter((d) => d.allowed)).toHaveLength(1);
   });
 
-  it('does not burn a transaction hash on a failed verification', async () => {
+  it('does not burn an authorization on a failed check', async () => {
     const ctx = world();
-    const txHash = ctx.ledger.transferFrom(CUSTOMER, MERCHANT, PRICE);
+    const payload = await customerPayment(terms);
 
-    const tooMuch = await ctx.guard.verifyReceipt({ ...receipt(txHash), expectedAmount: PRICE * 2n });
-    const correct = await ctx.guard.verifyReceipt(receipt(txHash));
+    const tooMuch = await accept(ctx, payload, 'order-1', { ...terms, amount: (PRICE * 2n).toString() });
+    const correct = await accept(ctx, payload, 'order-1');
 
     expect(tooMuch.allowed).toBe(false);
     expect(correct.allowed).toBe(true);
   });
 
-  it('denies when the chain cannot be read', async () => {
+  it('refuses when the facilitator rejects the payment, e.g. for lack of funds', async () => {
+    const ctx = guardedWorld();
+    expect(await accept(ctx, await customerPayment(terms))).toMatchObject({ allowed: false, check: CHECK.facilitator });
+  });
+
+  it('refuses without a facilitator', async () => {
     const ledger = new FakeLedger();
+    const guard = createGuard({ wallet: ledger, chain: ledger, fetchQuote: async () => Promise.reject(new Error('unused')), policy: defaultPolicy(ledger) });
+    const decision = await guard.acceptPayment({ orderId: 'o', payload: await customerPayment(terms), requirements: terms });
+    expect(decision).toMatchObject({ allowed: false, check: CHECK.facilitator });
+  });
+
+  it('denies when the settlement cannot be read onchain', async () => {
+    const ledger = new FakeLedger();
+    ledger.fund(CUSTOMER, parseUsdc('10'));
     const guard = createGuard({
       wallet: ledger,
-      chain: { getTx: async () => Promise.reject(new Error('RPC down')), getUsdcBalance: async () => 0n },
+      chain: {
+        getTx: async () => Promise.reject(new Error('RPC down')),
+        getUsdcBalance: async () => 0n,
+        authorizationUsed: (a, n) => ledger.authorizationUsed(a, n),
+      },
+      facilitator: new LocalFacilitator(ledger.facilitatorSigner()),
       fetchQuote: async () => Promise.reject(new Error('unused')),
       policy: defaultPolicy(ledger),
     });
-    const decision = await guard.verifyReceipt(receipt(ledger.nonexistentTxHash()));
+    const decision = await guard.acceptPayment({ orderId: 'o', payload: await customerPayment(terms), requirements: terms });
     expect(decision).toMatchObject({ allowed: false, check: CHECK.chain });
   });
 });
@@ -382,6 +416,10 @@ describe('guard: hold side', () => {
     const spy: WalletProvider = {
       addressOf: (role) => ledger.addressOf(role),
       getBalance: (role) => ledger.getBalance(role),
+      signTypedData: (role, data) => {
+        senders.push(role);
+        return ledger.signTypedData(role, data);
+      },
       transfer: (args) => {
         senders.push(args.from);
         return ledger.transfer(args);

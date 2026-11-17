@@ -6,11 +6,21 @@
  * Use parseUsdc / formatUsdc from ./constants.ts at the edges.
  */
 
+import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
+
 export type Address = `0x${string}`;
 export type TxHash = `0x${string}`;
 export type Usdc = bigint;
 
 export type WalletRole = 'vault' | 'hot' | 'merchant' | 'attacker';
+
+/** EIP-712 typed data to sign. Numbers may be bigint; wallets serialise as they need. */
+export interface TypedDataRequest {
+  domain: Record<string, unknown>;
+  types: Record<string, readonly { name: string; type: string }[]>;
+  primaryType: string;
+  message: Record<string, unknown>;
+}
 
 // ───────────────────────── Lane A: chain & wallets ─────────────────────────
 
@@ -24,6 +34,11 @@ export interface WalletProvider {
    * transaction and never pays twice. That is how an uncertain transfer is checked later.
    */
   transfer(args: { from: WalletRole; to: Address; amount: Usdc; idempotencyKey?: string }): Promise<{ txHash: TxHash }>;
+  /**
+   * Signs EIP-712 data as that role's address. This is how an x402 payment is authorised:
+   * the signature moves nothing until a facilitator submits it onchain.
+   */
+  signTypedData(role: WalletRole, data: TypedDataRequest): Promise<`0x${string}`>;
 }
 
 /** One ERC-20 Transfer log. `token` is the emitting contract — compare it to USDC_ADDRESS. */
@@ -46,25 +61,37 @@ export interface ChainReader {
   /** null when the transaction does not exist. */
   getTx(txHash: TxHash): Promise<TxInfo | null>;
   getUsdcBalance(address: Address): Promise<Usdc>;
+  /**
+   * Whether USDC has used this EIP-3009 authorization (an x402 payment), and the
+   * transaction that did. A used nonce can never be used again.
+   */
+  authorizationUsed(authorizer: Address, nonce: `0x${string}`): Promise<{ used: boolean; txHash?: TxHash }>;
 }
 
 // ───────────────────────────── Lane B: guard ─────────────────────────────
 
-/** What a merchant says something costs and where to pay. Untrusted input. */
+/**
+ * What a merchant says something costs and where to pay, read from its x402
+ * "402 Payment Required" answer. Untrusted input.
+ */
 export interface Quote {
   merchantUrl: string;
   item: string;
   payTo: Address;
   amount: Usdc;
   description?: string;
+  /** The x402 payment option this quote came from. Absent only in quotes saved before x402. */
+  requirements?: PaymentRequirements;
+  /** Extra fields of the order, such as the wallet a report is about. Sent again when paying. */
+  order?: Record<string, string>;
 }
 
 /**
  * How the guard asks a merchant for a price. Injected so tests can skip HTTP.
- * Real one (lane C exports it): GET {merchantUrl}/quote?item=… →
- *   { payTo: "0x…", amount: "<base units as string>", description?: string }
+ * Real one: POST {merchantUrl}/buy {item, ...order} without payment, and read the
+ * PAYMENT-REQUIRED header of the 402 that comes back.
  */
-export type QuoteFetcher = (merchantUrl: string, item: string) => Promise<Quote>;
+export type QuoteFetcher = (merchantUrl: string, item: string, order?: Record<string, string>) => Promise<Quote>;
 
 /** A quote the guard itself fetched and recorded. Payments must match one of these. */
 export interface PaymentIntent extends Quote {
@@ -81,6 +108,7 @@ export interface PaymentRequest {
   reason: string;
 }
 
+/** A transaction checked as proof that we were paid. Used on the settlement of an x402 payment. */
 export interface ReceiptRequest {
   orderId: string;
   txHash: TxHash;
@@ -88,22 +116,39 @@ export interface ReceiptRequest {
   expectedAmount: Usdc;
 }
 
+/** An x402 payment presented to us as a merchant, with what we asked for in return. */
+export interface IncomingPayment {
+  orderId: string;
+  payload: PaymentPayload;
+  requirements: PaymentRequirements;
+}
+
 export interface Decision {
   allowed: boolean;
   /** Which check decided, e.g. 'intent-match', 'allowlist', 'price', 'limits', 'loop', 'replay', 'ok'. */
   check: string;
   reason: string;
-  /** Set when a payment was actually sent. */
+  /** Set when a payment was actually sent: the transaction that settled it. */
   txHash?: TxHash;
+  /** Receive side: the transaction that settled a payment made to us. Not money we spent. */
+  receivedTx?: TxHash;
+  /** What the merchant answered once paid: usually the goods. JSON-safe. */
+  merchantResponse?: { status: number; body: unknown };
 }
 
 export interface Guard {
-  /** Fetches a quote from the merchant and records it as an intent. */
-  getQuote(merchantUrl: string, item: string): Promise<PaymentIntent>;
-  /** Send side: runs the checks and, if they pass, pays from the hot wallet. */
+  /** Asks the merchant for the item without paying, and records its 402 terms as an intent. */
+  getQuote(merchantUrl: string, item: string, order?: Record<string, string>): Promise<PaymentIntent>;
+  /**
+   * Send side: runs the checks and, if they pass, pays from the hot wallet over x402 (signs
+   * the authorization and presents it to the merchant). The merchant's answer comes back.
+   */
   requestPayment(req: PaymentRequest): Promise<Decision>;
-  /** Receive side: verifies an incoming payment onchain before goods are delivered. */
-  verifyReceipt(req: ReceiptRequest): Promise<Decision>;
+  /**
+   * Receive side: checks an x402 payment presented to us, has the facilitator settle it,
+   * and confirms the settlement onchain before goods are delivered.
+   */
+  acceptPayment(req: IncomingPayment): Promise<Decision>;
   /** Hold side: sweeps hot balance above the cap into the vault. */
   rebalance(): Promise<void>;
   hotBalance(): Promise<Usdc>;
@@ -115,7 +160,7 @@ export interface Guard {
 
 /** The only things the LLM can do. Each is routed through the guard (or straight to the wallet in --no-guard). */
 export interface AgentTools {
-  getQuote(merchantUrl: string, item: string): Promise<PaymentIntent>;
+  getQuote(merchantUrl: string, item: string, order?: Record<string, string>): Promise<PaymentIntent>;
   requestPayment(req: PaymentRequest): Promise<Decision>;
   checkBalance(): Promise<Usdc>;
 }

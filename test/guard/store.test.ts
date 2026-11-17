@@ -45,7 +45,7 @@ describe('JsonFileGuardStore', () => {
     new JsonFileGuardStore(path).save(state);
     const file = JSON.parse(readFileSync(path, 'utf8')) as { version: number; payments: { amount: string }[] };
 
-    expect(file.version).toBe(1);
+    expect(file.version).toBe(2);
     expect(file.payments.map((p) => p.amount)).toEqual(['2000000', '500000']);
     expect(existsSync(`${path}.tmp`)).toBe(false);
   });
@@ -60,7 +60,7 @@ describe('JsonFileGuardStore', () => {
     writeFileSync(path, JSON.stringify({ version: 1, intents: [], payments: [{ key: 'k', amount: 'lots' }], usedReceipts: [] }));
     expect(() => new JsonFileGuardStore(path).load()).toThrow(/unreadable or corrupt/);
 
-    writeFileSync(path, JSON.stringify({ version: 2, intents: [], payments: [], usedReceipts: [] }));
+    writeFileSync(path, JSON.stringify({ version: 3, intents: [], payments: [], usedReceipts: [] }));
     expect(() => new JsonFileGuardStore(path).load()).toThrow(/unreadable or corrupt/);
   });
 });

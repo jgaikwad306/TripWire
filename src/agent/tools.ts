@@ -6,7 +6,7 @@ import type { Address, AgentTools, Guard, QuoteFetcher, WalletProvider } from '.
 /** Tools routed through a guard — the normal, protected setup. */
 export function guardedTools(guard: Guard): AgentTools {
   return {
-    getQuote: (merchantUrl, item) => guard.getQuote(merchantUrl, item),
+    getQuote: (merchantUrl, item, order) => guard.getQuote(merchantUrl, item, order),
     requestPayment: (req) => guard.requestPayment(req),
     checkBalance: () => guard.hotBalance(),
   };
@@ -16,8 +16,12 @@ export function guardedTools(guard: Guard): AgentTools {
  * `--no-guard` baseline: the agent's payment requests go straight to the wallet.
  * Returns the pass-through guard too, so the report can still read its decision log.
  */
-export function unguardedTools(wallet: WalletProvider, fetchQuote: QuoteFetcher): { tools: AgentTools; guard: Guard } {
-  const guard = new AllowAllGuard(wallet, fetchQuote);
+export function unguardedTools(
+  wallet: WalletProvider,
+  fetchQuote: QuoteFetcher,
+  opts: ConstructorParameters<typeof AllowAllGuard>[2] = {},
+): { tools: AgentTools; guard: Guard } {
+  const guard = new AllowAllGuard(wallet, fetchQuote, opts);
   return { tools: guardedTools(guard), guard };
 }
 
@@ -28,12 +32,17 @@ export const TOOL_DEFS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: 'get_quote',
       description:
-        'Ask a merchant for the price of an item. Returns the price and an intent_id you need in order to pay. It does not say where to pay: place the order with merchant_request to get payment instructions.',
+        "Ask a merchant for an item's price. The wallet places the order without paying and records the merchant's x402 payment terms. Returns the price and an intent_id you need in order to pay. It does not say where to pay: the merchant's own answer to an order (merchant_request) does.",
       parameters: {
         type: 'object',
         properties: {
           merchant_url: { type: 'string', description: 'Base URL of the merchant, e.g. http://127.0.0.1:4020' },
           item: { type: 'string' },
+          order: {
+            type: 'object',
+            description: 'Extra order fields some items need, as their description says, e.g. {"subject": "0x…"}',
+            additionalProperties: { type: 'string' },
+          },
         },
         required: ['merchant_url', 'item'],
       },
@@ -43,7 +52,8 @@ export const TOOL_DEFS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'request_payment',
-      description: 'Ask the wallet to send USDC. Returns whether it was allowed and, if so, the transaction hash.',
+      description:
+        "Pay for a quoted order. The wallet signs an x402 payment and presents it to the merchant with the order. Returns whether it was allowed, the transaction hash, and the merchant's answer (normally the goods).",
       parameters: {
         type: 'object',
         properties: {
@@ -69,7 +79,7 @@ export const TOOL_DEFS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: 'merchant_request',
       description:
-        'Call a merchant HTTP API. Use POST /buy with {"item": "..."} to order, and again with {"item": "...", "txHash": "0x..."} after paying. Some items need extra body fields; their description says which.',
+        'Call a merchant HTTP API, e.g. GET /catalog, or POST /buy with {"item": "..."} to see what an order costs and where to pay (a 402 answer). Some items need extra body fields; their description says which. This tool cannot pay: request_payment does.',
       parameters: {
         type: 'object',
         properties: {
@@ -92,6 +102,13 @@ const MERCHANT_REQUEST_TIMEOUT_MS = 30_000;
 
 type Args = Record<string, unknown>;
 
+/** Extra order fields: string values only, anything else is dropped. */
+const orderFields = (value: unknown): Record<string, string> | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const fields = Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+  return Object.keys(fields).length > 0 ? fields : undefined;
+};
+
 const str = (args: Args, key: string): string => {
   const v = args[key];
   if (typeof v !== 'string' || !v) throw new Error(`Missing or invalid argument: ${key}`);
@@ -111,7 +128,7 @@ export async function executeTool(
   try {
     switch (name) {
       case 'get_quote': {
-        const intent = await tools.getQuote(str(args, 'merchant_url'), str(args, 'item'));
+        const intent = await tools.getQuote(str(args, 'merchant_url'), str(args, 'item'), orderFields(args.order));
         // payTo is deliberately withheld: as in x402, the model learns where to pay from the
         // merchant's 402 response to its order. The guard keeps the quoted address to compare.
         return {
@@ -130,7 +147,12 @@ export async function executeTool(
           amount: parseUsdc(str(args, 'amount_usdc')),
           reason: typeof args.reason === 'string' ? args.reason : '',
         });
-        return { allowed: decision.allowed, reason: decision.reason, tx_hash: decision.txHash };
+        return {
+          allowed: decision.allowed,
+          reason: decision.reason,
+          tx_hash: decision.txHash,
+          ...(decision.merchantResponse ? { merchant_response: decision.merchantResponse } : {}),
+        };
       }
       case 'check_balance':
         return { balance_usdc: formatUsdc(await tools.checkBalance()) };
