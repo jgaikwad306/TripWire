@@ -1,0 +1,15 @@
+{
+  "allowlist": ["0x1111111111111111111111111111111111111111"],
+  "receiveAddresses": ["0x1111111111111111111111111111111111111111"],
+  "perTxCap": "5",
+  "dailyCap": "20",
+  "hotBalanceCap": "10",
+  "priceToleranceBps": 500,
+  "expectedPrices": {
+    "report": "0.5",
+    "dataset": "2"
+  },
+  "loopWindowMs": 600000,
+  "loopMaxRepeats": 2,
+  "minConfirmations": 1
+}
