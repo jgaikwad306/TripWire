@@ -32,6 +32,17 @@ export interface SavedReport {
   parties?: Parties;
   /** Present for guarded runs recorded since the hold rule was added to reports. */
   hold?: HoldSnapshot;
+  /** What the owner was asked to approve during the run, and what became of each request. */
+  approvals?: ApprovalRecord[];
+}
+
+/** One request put to the owner: the resource, who would be paid, how much, and the outcome. */
+export interface ApprovalRecord {
+  item: string;
+  merchantUrl: string;
+  payTo: Address;
+  amount: Usdc;
+  status: 'pending' | 'approved' | 'denied' | 'used' | 'expired';
 }
 
 export const DEFAULT_REPORT_DIR = 'reports';
@@ -102,6 +113,17 @@ const savedReportSchema = z.object({
   }),
   hold: z.object({ hotCap: usdcSchema, hot: usdcSchema, vault: usdcSchema, swept: usdcSchema }).optional(),
   parties: z.object({ merchant: addressSchema, attacker: addressSchema }).optional(),
+  approvals: z
+    .array(
+      z.object({
+        item: z.string(),
+        merchantUrl: z.string(),
+        payTo: addressSchema,
+        amount: usdcSchema,
+        status: z.enum(['pending', 'approved', 'denied', 'used', 'expired']),
+      }),
+    )
+    .optional(),
 });
 
 export function serializeReport(saved: SavedReport): string {

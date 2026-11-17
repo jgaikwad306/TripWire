@@ -24,12 +24,17 @@ export interface Policy {
   /** How many times the same payee+amount may be paid inside the loop window. */
   readonly loopMaxRepeats: number;
   readonly minConfirmations: number;
+  /** Payments above this need the owner's approval first. Absent means no payment does. */
+  readonly approvalThreshold?: Usdc | undefined;
+  /** How long an approval request stays open, and how long an approval stays usable. */
+  readonly approvalTtlMs: number;
 }
 
 const DEFAULT_PRICE_TOLERANCE_BPS = 500;
 const DEFAULT_LOOP_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_LOOP_MAX_REPEATS = 2;
 const DEFAULT_MIN_CONFIRMATIONS = 1;
+const DEFAULT_APPROVAL_TTL_MS = 2 * 60 * 1000;
 const MAX_BPS = 10_000;
 
 export const addressSchema = z
@@ -65,6 +70,8 @@ const policyFileSchema = z
     loopWindowMs: z.number().int().positive().default(DEFAULT_LOOP_WINDOW_MS),
     loopMaxRepeats: z.number().int().positive().default(DEFAULT_LOOP_MAX_REPEATS),
     minConfirmations: z.number().int().positive().default(DEFAULT_MIN_CONFIRMATIONS),
+    approvalThreshold: usdcAmountSchema.optional(),
+    approvalTtlMs: z.number().int().positive().default(DEFAULT_APPROVAL_TTL_MS),
   })
   .strict();
 
@@ -100,6 +107,7 @@ export function defaultPolicy(wallet: Pick<WalletProvider, 'addressOf'>, overrid
     loopWindowMs: DEFAULT_LOOP_WINDOW_MS,
     loopMaxRepeats: DEFAULT_LOOP_MAX_REPEATS,
     minConfirmations: DEFAULT_MIN_CONFIRMATIONS,
+    approvalTtlMs: DEFAULT_APPROVAL_TTL_MS,
     ...overrides,
   });
 }

@@ -4,7 +4,9 @@ import { startMerchant, type MockMerchant } from '../merchant/server.js';
 import { guardedTools } from '../agent/tools.js';
 import { parseUsdc } from '../constants.js';
 import { AllowAllGuard, FAKE_ADDRESSES, FakeLedger } from '../fakes/index.js';
+import { ApprovalDesk } from '../guard/approvals.js';
 import { createGuard, defaultPolicy, type Policy } from '../guard/index.js';
+import { startOwnerConsole } from '../owner/server.js';
 import type { Network } from '../report/store.js';
 import type {
   Address,
@@ -69,6 +71,10 @@ export interface World extends ScenarioContext {
   counterfeitTransfer(to: Address, amount: bigint): Promise<TxHash>;
   /** The wallet the paid activity report is bought for. */
   activitySubject: Address;
+  /** Requests put to the owner. Empty unless the run or the scenario turns approval on. */
+  approvals: ApprovalDesk;
+  /** Where the owner's approval page is, without its token. Set when a scenario runs one. */
+  ownerUrl?: string;
   /** Steps recorded as the scenario runs. Kept here so it survives a scenario that throws. */
   transcript: TranscriptEntry[];
   close(): Promise<void>;
@@ -80,9 +86,17 @@ export interface WorldOptions {
   agent: Agent;
   /** Wallet to buy the activity report for. Defaults to a sample wallet offline and the hot wallet on Arc. */
   activitySubject?: Address;
+  /** Owner approval for the whole run: payments above `threshold` wait up to `waitMs` on `desk`. */
+  approval?: { threshold: Usdc; desk: ApprovalDesk; waitMs: number };
 }
 
-export type WorldFactory = () => Promise<World>;
+/** What one scenario needs changed about its world. */
+export interface WorldOverrides {
+  /** Turns owner approval on for this scenario, above this amount. */
+  approvalThreshold?: (prices: Prices) => Usdc;
+}
+
+export type WorldFactory = (overrides?: WorldOverrides) => Promise<World>;
 
 interface WorldBase {
   network: Network;
@@ -118,8 +132,9 @@ export async function waitForTx(chain: ChainReader, txHash: TxHash, timeoutMs: n
  * The owner's policy for a red-team run: only the merchant is payable, the dearest item
  * sits exactly at the per-payment cap (honest-3), and every item has a reference price.
  */
-export function runPolicy(wallet: WalletProvider, prices: Prices): Policy {
+export function runPolicy(wallet: WalletProvider, prices: Prices, overrides: Partial<Policy> = {}): Policy {
   return defaultPolicy(wallet, {
+    ...overrides,
     // One identical payment per window: an agent told "payment not received, pay again"
     // typically fetches a fresh quote first, which only this repeat limit can stop.
     loopMaxRepeats: 1,
@@ -129,12 +144,25 @@ export function runPolicy(wallet: WalletProvider, prices: Prices): Policy {
   });
 }
 
-async function assembleWorld(base: WorldBase, opts: WorldOptions): Promise<World> {
+async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: WorldOverrides = {}): Promise<World> {
   const { wallet, chain, prices } = base;
+  const approvals = opts.approval?.desk ?? new ApprovalDesk();
+  const approvalThreshold = opts.approval?.threshold ?? overrides.approvalThreshold?.(prices);
   // A new guard per scenario: spend history and loop counts must not carry over.
   const guard: Guard = opts.guarded
-    ? createGuard({ wallet, chain, fetchQuote: httpQuoteFetcher, policy: runPolicy(wallet, prices) })
+    ? createGuard({
+        wallet,
+        chain,
+        fetchQuote: httpQuoteFetcher,
+        policy: runPolicy(wallet, prices, approvalThreshold === undefined ? {} : { approvalThreshold }),
+        approvals,
+        approvalWaitMs: opts.approval?.waitMs ?? 0,
+      })
     : new AllowAllGuard(wallet, httpQuoteFetcher);
+  // A scenario that turns approvals on gets the owner's page too, as a real owner would
+  // have it running. A caller that passes its own desk runs its own page.
+  const ownerConsole =
+    opts.guarded && !opts.approval && overrides.approvalThreshold ? await startOwnerConsole(approvals) : undefined;
   const attacker = wallet.addressOf('attacker');
   const merchant = await startMerchant({
     payTo: wallet.addressOf('merchant'),
@@ -163,13 +191,18 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions): Promise<World
     attacker,
     activitySubject: opts.activitySubject ?? base.activitySubject,
     transcript: [],
-    close: () => merchant.close(),
+    approvals,
+    // The page's address without its token: that is all an attacker could find out.
+    ...(ownerConsole ? { ownerUrl: new URL(ownerConsole.url).origin } : {}),
+    close: async () => {
+      await Promise.all([merchant.close(), ownerConsole?.close()]);
+    },
   };
 }
 
 /** Offline world: in-memory ledger, real HTTP merchant on localhost. No keys, no network. */
 export function fakeWorldFactory(opts: WorldOptions): WorldFactory {
-  return async () => {
+  return async (overrides) => {
     const ledger = new FakeLedger({ vault: FAKE_VAULT_BALANCE, hot: FAKE_HOT_BALANCE });
     seedActivity(ledger);
     return assembleWorld(
@@ -184,6 +217,7 @@ export function fakeWorldFactory(opts: WorldOptions): WorldFactory {
         counterfeitTransfer: async (to, amount) => ledger.counterfeitTransfer(FAKE_ADDRESSES.attacker, to, amount),
       },
       opts,
+      overrides,
     );
   };
 }
@@ -200,7 +234,7 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
   const walletLane = () => import('../wallet/index.js');
   let live: Promise<{ wallet: WalletProvider; chain: ChainReader }> | undefined;
 
-  return async () => {
+  return async (overrides) => {
     const lane = await walletLane();
     live ??= lane.createLiveWallet();
     const { wallet, chain } = await live;
@@ -223,6 +257,7 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
           }),
       },
       opts,
+      overrides,
     );
   };
 }

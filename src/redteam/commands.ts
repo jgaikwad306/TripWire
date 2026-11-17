@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { saveHtmlReport } from '../report/html.js';
 import { CAREFUL_SYSTEM_PROMPT, GrokAgent } from '../agent/grok.js';
-import { ARC_TESTNET, explorerTxUrl, formatUsdc } from '../constants.js';
+import { ARC_TESTNET, explorerTxUrl, formatUsdc, parseUsdc } from '../constants.js';
+import { ApprovalDesk } from '../guard/approvals.js';
+import { startOwnerConsole } from '../owner/server.js';
 import { describeResult, renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
 import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, saveReport, type HoldSnapshot, type Parties, type SavedReport } from '../report/store.js';
 import type { Address, Agent } from '../types.js';
@@ -12,7 +14,7 @@ import { runScenarios } from './runner.js';
 import { ALL_SCENARIOS, findScenario, type RedTeamScenario } from './scenarios/index.js';
 import { paidApiScenario } from './scenarios/paid-api.js';
 import { buildReport } from './score.js';
-import { fakeWorldFactory, liveWorldFactory, runPolicy, type World, type WorldFactory } from './world.js';
+import { fakeWorldFactory, liveWorldFactory, runPolicy, type World, type WorldFactory, type WorldOptions } from './world.js';
 
 const AGENT_KINDS = ['naive', 'grok', 'grok-careful'] as const;
 type AgentKind = (typeof AGENT_KINDS)[number];
@@ -128,9 +130,15 @@ async function runOnce(opts: {
   outDir: string;
   io: CommandIo;
   activitySubject?: Address;
+  approval?: WorldOptions['approval'];
 }): Promise<SavedReport> {
-  const { scenarios, guarded, fake, agent, outDir, io, activitySubject } = opts;
-  const worldOptions = { guarded, agent, ...(activitySubject ? { activitySubject } : {}) };
+  const { scenarios, guarded, fake, agent, outDir, io, activitySubject, approval } = opts;
+  const worldOptions: WorldOptions = {
+    guarded,
+    agent,
+    ...(activitySubject ? { activitySubject } : {}),
+    ...(approval ? { approval } : {}),
+  };
   const makeWorld = fake ? fakeWorldFactory(worldOptions) : liveWorldFactory(worldOptions, io.env);
   const { hold, parties } = await checkWorld(makeWorld, guarded, io);
 
@@ -145,6 +153,17 @@ async function runOnce(opts: {
     report: buildReport(results, { agentName: agent.name, guarded, startedAt }),
     ...(hold ? { hold } : {}),
     parties,
+    ...(approval
+      ? {
+          approvals: approval.desk.list().map((a) => ({
+            item: a.item,
+            merchantUrl: a.merchantUrl,
+            payTo: a.payTo,
+            amount: a.amount,
+            status: a.status,
+          })),
+        }
+      : {}),
   };
   const paths = saveReport(saved, renderMarkdown(saved), outDir);
   const htmlPath = saveHtmlReport(saved, undefined, outDir);
@@ -229,11 +248,15 @@ export function comparablePair(a: SavedReport, b: SavedReport): { guarded: Saved
   return a.report.guarded ? { guarded: a, baseline: b } : { guarded: b, baseline: a };
 }
 
-const BUY_USAGE = `Usage: npm run cli buy -- [options]
+const DEFAULT_APPROVAL_WAIT_SECONDS = 120;
+
+const BUY_USAGE =`Usage: npm run cli buy -- [options]
 
 Buys a report of a wallet's recent USDC transfers from the paid API and answers from it.
 
   --address <0x…>     wallet to report on (default: the hot wallet; a sample wallet with --fake)
+  --approve-above <usdc>  payments above this wait for you to approve them on a local page
+  --approval-wait <s> how long a payment waits for your decision (default: ${DEFAULT_APPROVAL_WAIT_SECONDS})
   --fake              offline: in-memory ledger instead of Arc Testnet
   --no-guard          baseline: approve every payment and receipt
   --agent <kind>      ${AGENT_KINDS.join(' | ')} (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
@@ -254,6 +277,8 @@ export async function buyCommand(args: string[], io: CommandIo = defaultIo()): P
     args,
     options: {
       address: { type: 'string' },
+      'approve-above': { type: 'string' },
+      'approval-wait': { type: 'string', default: String(DEFAULT_APPROVAL_WAIT_SECONDS) },
       fake: { type: 'boolean', default: false },
       'no-guard': { type: 'boolean', default: false },
       agent: { type: 'string' },
@@ -266,15 +291,40 @@ export async function buyCommand(args: string[], io: CommandIo = defaultIo()): P
     return;
   }
   const activitySubject = parseAddress(values.address);
-  const saved = await runOnce({
-    scenarios: [paidApiScenario],
-    guarded: !values['no-guard'],
-    fake: values.fake,
-    agent: createAgent(values.agent, io.env),
-    outDir: values.out,
-    io,
-    ...(activitySubject ? { activitySubject } : {}),
-  });
+  const guarded = !values['no-guard'];
+  const threshold = values['approve-above'] === undefined ? undefined : parseUsdc(values['approve-above']);
+  const waitSeconds = Number(values['approval-wait']);
+  if (!Number.isFinite(waitSeconds) || waitSeconds < 0) {
+    throw new Error(`--approval-wait "${values['approval-wait']}" is not a number of seconds.`);
+  }
+  if (threshold !== undefined && !guarded) {
+    throw new Error('--approve-above needs the guard: without it nothing holds a payment for approval. Drop --no-guard.');
+  }
+  const agent = createAgent(values.agent, io.env);
+
+  // The owner's page runs for the length of the purchase. Its address carries the token
+  // that lets someone approve, so it goes to the terminal and nowhere the agent can read.
+  const desk = threshold === undefined ? undefined : new ApprovalDesk();
+  const owner = desk ? await startOwnerConsole(desk) : undefined;
+  if (owner && threshold !== undefined) {
+    io.log(`Owner approval page: ${owner.url}`);
+    io.log(`Payments above ${formatUsdc(threshold)} USDC wait there for your decision, for up to ${waitSeconds} seconds.`);
+  }
+  let saved: SavedReport;
+  try {
+    saved = await runOnce({
+      scenarios: [paidApiScenario],
+      guarded,
+      fake: values.fake,
+      agent,
+      outDir: values.out,
+      io,
+      ...(activitySubject ? { activitySubject } : {}),
+      ...(desk && threshold !== undefined ? { approval: { threshold, desk, waitMs: waitSeconds * 1000 } } : {}),
+    });
+  } finally {
+    await owner?.close();
+  }
 
   const result = saved.report.results[0];
   const answer = [...(result?.transcript ?? [])].reverse().find((entry) => entry.kind === 'agent');
