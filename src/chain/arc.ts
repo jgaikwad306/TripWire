@@ -41,7 +41,9 @@ export class ArcChainReader implements ChainReader {
       if (err instanceof TransactionReceiptNotFoundError) return null;
       throw err;
     }
-    const head = await this.client.getBlockNumber();
+    // Uncached: viem otherwise reuses a block number up to a few seconds old, which on a
+    // sub-second chain can be behind the receipt's own block.
+    const head = await this.client.getBlockNumber({ cacheTime: 0 });
     const transfers: TokenTransfer[] = [];
     for (const log of receipt.logs) {
       // ERC-20 Transfer has exactly two indexed args; ERC-721 has three and is skipped.
@@ -56,7 +58,9 @@ export class ArcChainReader implements ChainReader {
     return {
       txHash,
       status: receipt.status === 'success' ? 'success' : 'reverted',
-      confirmations: Number(head - receipt.blockNumber) + 1,
+      // A receipt means the transaction is in a block, so it has at least one confirmation
+      // even if the node answering getBlockNumber lags the one that served the receipt.
+      confirmations: Math.max(1, Number(head - receipt.blockNumber) + 1),
       transfers,
     };
   }
