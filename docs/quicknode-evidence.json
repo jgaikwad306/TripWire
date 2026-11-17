@@ -1,0 +1,91 @@
+{
+  "capturedAt": "2026-11-17T21:50:20.186Z",
+  "network": "arc-testnet",
+  "chainId": 5042002,
+  "streamId": "725f4c2e-ae55-46e2-bc17-b7e635b12f42",
+  "providerStatus": "active",
+  "dataset": "block_with_receipts",
+  "datasetBatchSize": 1,
+  "elasticBatchEnabled": true,
+  "destination": {
+    "type": "webhook",
+    "url": "https://keeping-competitions-broadcasting-disposition.trycloudflare.com/webhooks/quicknode"
+  },
+  "watchedWallets": {
+    "hot": "0xe5f6528ac8fc2beea3340297d51effce42e7bcc7",
+    "vault": "0xd07375932c1bb412ba21f5bc83e7dfb7aa3f939e",
+    "merchant": "0x3263f4b7c94b12c4055fccef09375e87f80ac079"
+  },
+  "filterSource": "src/streams/filter.js",
+  "renderedFilterSha256": "fb8950f8d43c794f7c12e4d7f82ce75267c97ac7766cc6796b35b020266a7723",
+  "startBlock": 72732374,
+  "liveBoundary": 72742373,
+  "indexedThrough": 72746087,
+  "ready": true,
+  "frozen": false,
+  "historicalReceipt": {
+    "transactionHash": "0x0e9915dc774cf65b57a098836f4f3fc3e73e7dfc0c32a7cb9e16461924fb72ff",
+    "block": 72734984,
+    "headAtVerification": 72743584,
+    "blocksBehindHead": 8600,
+    "source": "Authenticated QuickNode Stream delivery persisted in the local journal",
+    "receiptStatus": "success",
+    "indexedAuthorizationTransaction": "0x0e9915dc774cf65b57a098836f4f3fc3e73e7dfc0c32a7cb9e16461924fb72ff"
+  },
+  "liveValidation": {
+    "staleMonitoring": {
+      "decision": {
+        "allowed": false,
+        "check": "monitoring",
+        "reason": "Stream is disconnected or more than 60 seconds behind"
+      },
+      "transactions": [],
+      "usdcLost": "0"
+    },
+    "authorizedPurchase": {
+      "amountUsdc": "0.05",
+      "txHash": "0x6dc9236f7e105f805f59e1c3b2785b7bf695301e0dc37bbfcf5bd5754907320d",
+      "delivered": true,
+      "indexedReceiptStatus": "success",
+      "indexedAuthorizationTransaction": "0x6dc9236f7e105f805f59e1c3b2785b7bf695301e0dc37bbfcf5bd5754907320d"
+    },
+    "controlledOutflow": {
+      "streamId": "725f4c2e-ae55-46e2-bc17-b7e635b12f42",
+      "txHash": "0xf473af47c0ffd0b5ed7b54177a94fbd589d01a5e59a08495ea2148c29538916c",
+      "alertId": "0xf473af47c0ffd0b5ed7b54177a94fbd589d01a5e59a08495ea2148c29538916c:14",
+      "amountUsdc": "0.001",
+      "frozen": true,
+      "spendingReady": false,
+      "reason": "USDC outflow has no matching guarded authorization",
+      "observedAt": "2026-11-17T21:49:54.203Z",
+      "freezeSurvivedJournalReplay": true
+    },
+    "frozenAgent": {
+      "decision": {
+        "allowed": false,
+        "check": "monitoring",
+        "reason": "Spending frozen: USDC outflow has no matching guarded authorization"
+      },
+      "transactions": [],
+      "usdcLost": "0"
+    },
+    "ownerAcknowledgment": {
+      "alertId": "0xf473af47c0ffd0b5ed7b54177a94fbd589d01a5e59a08495ea2148c29538916c:14",
+      "at": 1794952196964,
+      "reason": "Reviewed controlled 0.001 USDC testnet smoke transfer to the owned attacker wallet"
+    },
+    "finalMonitoring": {
+      "ready": true,
+      "frozen": false,
+      "indexedThrough": 72746092,
+      "dataAgeSeconds": 1
+    }
+  },
+  "automatedValidation": {
+    "testCommand": "npm test",
+    "passed": 398,
+    "skipped": 3,
+    "typecheckCommand": "npm run typecheck",
+    "typecheckPassed": true
+  }
+}

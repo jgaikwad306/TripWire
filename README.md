@@ -283,6 +283,8 @@ npm run cli buy -- --fake             # offline, with a sample wallet
 
 TripWire uses a **real QuickNode Stream with a JavaScript filter and an HTTPS webhook destination**. The `block_with_receipts` filter in [`src/streams/filter.js`](src/streams/filter.js) selects receipts involving the hot, vault, or merchant wallet. Setup injects the existing Circle addresses. Every batch also carries compact block checkpoints, so an idle wallet does not look like a disconnected Stream.
 
+Recorded live configuration, historical receipt recovery, and purchase/freeze verification are in [`docs/QUICKNODE_EVIDENCE.md`](docs/QUICKNODE_EVIDENCE.md), with a [nonsecret JSON evidence snapshot](docs/quicknode-evidence.json).
+
 The monitor records unexpected hot/vault outflows, freezes subsequent guarded spending, supplies indexed receipt and authorization evidence, and powers watched-wallet activity reports. The merchant address is included for incoming receipt verification; its outgoing refunds do not freeze the owner's wallets.
 
 **Set up the live Stream:**
