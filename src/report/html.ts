@@ -419,6 +419,7 @@ export function renderHtml(primary: SavedReport, baseline?: SavedReport): string
           },
         ]
       : []),
+    ...(hasPurchase(primary) ? [{ id: 'purchase', label: 'Paid API', body: purchaseSection(primary, baseline) }] : []),
     ...(primary.hold ? [{ id: 'wallet', label: 'Wallet', body: holdSection(primary.hold, Boolean(base)) }] : []),
     ...(hasTranscripts(primary) || (baseline !== undefined && hasTranscripts(baseline)) ? [{ id: 'replay', label: 'Replay', body: replaySection(primary, baseline) }] : []),
     {
@@ -559,6 +560,46 @@ function replayFor(saved: SavedReport, r: ScenarioResult, label: string): string
           <h4>${esc(label)}: ${esc(lowerFirst(outcomeOf(r).headline))}</h4>
           ${steps ? `<ol class="steps">\n          ${steps}\n          </ol>` : '<p class="quiet">Nothing was recorded for this run.</p>'}
         </div>`;
+}
+
+const PURCHASE_SCENARIO_ID = 'paid-api';
+
+const purchaseOf = (saved: SavedReport | undefined): ScenarioResult | undefined =>
+  saved?.report.results.find((r) => r.id === PURCHASE_SCENARIO_ID);
+
+const hasPurchase = (saved: SavedReport): boolean => purchaseOf(saved) !== undefined;
+
+/** One run of the paid API purchase: the payment, what the agent answered, and every step. */
+function purchaseRun(saved: SavedReport, r: ScenarioResult, label: string): string {
+  const answer = [...(r.transcript ?? [])].reverse().find((entry) => entry.kind === 'agent');
+  const steps = replaySteps(saved, r);
+  return `<div class="run">
+          <h4>${esc(label)}: ${esc(lowerFirst(outcomeOf(r).headline))}</h4>
+          ${r.txHashes.length ? `<p class="txs">Payment: ${r.txHashes.map((h) => txLink(saved, h)).join(' ')}</p>` : '<p class="quiet">No payment was made.</p>'}
+          <h4>What the agent answered</h4>
+          <p class="said">${answer && 'text' in answer ? annotate(answer.text, saved.parties) : 'The agent gave no answer.'}</p>
+          ${r.error ? `<p class="said">Error: ${esc(r.error)}</p>` : ''}
+          <h4>Step by step</h4>
+          ${steps ? `<ol class="steps">\n          ${steps}\n          </ol>` : '<p class="quiet">Nothing was recorded for this run.</p>'}
+        </div>`;
+}
+
+/**
+ * The purchase the guard exists to protect: the agent buys real data from a paid API and
+ * answers a question from it. The data and the answer come from the merchant and the
+ * model, so both are escaped like everything else on the page.
+ */
+function purchaseSection(primary: SavedReport, baseline: SavedReport | undefined): string {
+  const mine = purchaseOf(primary);
+  const theirs = purchaseOf(baseline);
+  if (!mine) return '';
+  const where = primary.network === 'arc-testnet' ? 'on Arc Testnet' : 'on the simulated ledger';
+  return `<section class="block">
+      <h2>A paid API purchase</h2>
+      <p>The agent buys a report of a wallet's recent USDC transfers from a paid API, pays for it ${where}, and answers a question from the data it bought. The merchant checks the payment onchain before it hands the data over.</p>
+      ${purchaseRun(primary, mine, primary.report.guarded ? 'With the guard' : 'Without the guard')}
+      ${baseline && theirs ? purchaseRun(baseline, theirs, 'Without the guard') : ''}
+    </section>`;
 }
 
 /** Each scenario as it happened: what the agent was told, what it did, and who answered. */

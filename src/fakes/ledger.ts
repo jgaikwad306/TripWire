@@ -1,3 +1,4 @@
+import type { ActivityReader, UsdcTransfer } from '../chain/activity.js';
 import { USDC_ADDRESS } from '../constants.js';
 import type { Address, ChainReader, TokenTransfer, TxHash, TxInfo, Usdc, WalletProvider, WalletRole } from '../types.js';
 
@@ -18,7 +19,7 @@ export const FAKE_TOKEN_ADDRESS: Address = '0x0000000000000000000000000000000000
  *
  * Lane A replaces this with CircleWallet + ArcChainReader; everyone else tests against it.
  */
-export class FakeLedger implements WalletProvider, ChainReader {
+export class FakeLedger implements WalletProvider, ChainReader, ActivityReader {
   private balances = new Map<Address, Usdc>();
   private txs = new Map<TxHash, TxInfo>();
   private nonce = 0;
@@ -48,6 +49,17 @@ export class FakeLedger implements WalletProvider, ChainReader {
 
   async getUsdcBalance(address: Address): Promise<Usdc> {
     return this.balances.get(norm(address)) ?? 0n;
+  }
+
+  /** USDC transfers the address sent or received, newest first. A transaction's position stands in for its block. */
+  async getUsdcActivity(address: Address, limit: number): Promise<UsdcTransfer[]> {
+    const wanted = norm(address);
+    const found = [...this.txs.values()].flatMap((tx, index) =>
+      tx.transfers
+        .filter((t) => norm(t.token) === norm(USDC_ADDRESS) && (norm(t.from) === wanted || norm(t.to) === wanted))
+        .map((t): UsdcTransfer => ({ txHash: tx.txHash, from: norm(t.from), to: norm(t.to), amount: t.value, blockNumber: index + 1 })),
+    );
+    return found.reverse().slice(0, limit);
   }
 
   // ── test helpers (not part of either interface) ──

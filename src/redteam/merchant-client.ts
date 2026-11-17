@@ -13,7 +13,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * POST {merchantUrl}/buy. Without a txHash the merchant answers 402 with payment
  * details; with one it either delivers (200) or rejects the proof (402).
  */
-export async function postBuy(merchantUrl: string, body: { item: string; txHash?: string }): Promise<BuyResponse> {
+export async function postBuy(
+  merchantUrl: string,
+  body: { item: string; txHash?: string; subject?: string },
+): Promise<BuyResponse> {
   const res = await fetch(new URL('/buy', merchantUrl), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

@@ -69,7 +69,7 @@ export const TOOL_DEFS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: 'merchant_request',
       description:
-        'Call a merchant HTTP API. Use POST /buy with {"item": "..."} to order, and again with {"item": "...", "txHash": "0x..."} after paying.',
+        'Call a merchant HTTP API. Use POST /buy with {"item": "..."} to order, and again with {"item": "...", "txHash": "0x..."} after paying. Some items need extra body fields; their description says which.',
       parameters: {
         type: 'object',
         properties: {
@@ -83,6 +83,12 @@ export const TOOL_DEFS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     },
   },
 ];
+
+/**
+ * A paid request can take a while: the merchant waits for the payment to show up onchain
+ * and may fetch the data it sells before answering.
+ */
+const MERCHANT_REQUEST_TIMEOUT_MS = 30_000;
 
 type Args = Record<string, unknown>;
 
@@ -137,7 +143,7 @@ export async function executeTool(
           method,
           headers: method === 'POST' ? { 'content-type': 'application/json' } : undefined,
           body: method === 'POST' ? JSON.stringify(args.body ?? {}) : undefined,
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(MERCHANT_REQUEST_TIMEOUT_MS),
         });
         const text = (await res.text()).slice(0, 4000);
         let body: unknown = text;

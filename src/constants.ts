@@ -7,6 +7,8 @@ export const ARC_TESTNET = {
   circleBlockchain: 'ARC-TESTNET',
   defaultRpcUrl: 'https://rpc.testnet.arc.io',
   explorerUrl: 'https://testnet.arcscan.app',
+  /** Blockscout API behind the explorer (testnet.arcscan.app redirects here). */
+  explorerApiUrl: 'https://explorer.testnet.arc.io',
   faucetUrl: 'https://faucet.circle.com',
 } as const;
 

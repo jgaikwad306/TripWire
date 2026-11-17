@@ -3,13 +3,14 @@ import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { saveHtmlReport } from '../report/html.js';
 import { CAREFUL_SYSTEM_PROMPT, GrokAgent } from '../agent/grok.js';
-import { ARC_TESTNET, formatUsdc } from '../constants.js';
+import { ARC_TESTNET, explorerTxUrl, formatUsdc } from '../constants.js';
 import { describeResult, renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
 import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, saveReport, type HoldSnapshot, type Parties, type SavedReport } from '../report/store.js';
-import type { Agent } from '../types.js';
+import type { Address, Agent } from '../types.js';
 import { NaiveAgent } from './naive-agent.js';
 import { runScenarios } from './runner.js';
 import { ALL_SCENARIOS, findScenario, type RedTeamScenario } from './scenarios/index.js';
+import { paidApiScenario } from './scenarios/paid-api.js';
 import { buildReport } from './score.js';
 import { fakeWorldFactory, liveWorldFactory, runPolicy, type World, type WorldFactory } from './world.js';
 
@@ -126,9 +127,10 @@ async function runOnce(opts: {
   agent: Agent;
   outDir: string;
   io: CommandIo;
+  activitySubject?: Address;
 }): Promise<SavedReport> {
-  const { scenarios, guarded, fake, agent, outDir, io } = opts;
-  const worldOptions = { guarded, agent };
+  const { scenarios, guarded, fake, agent, outDir, io, activitySubject } = opts;
+  const worldOptions = { guarded, agent, ...(activitySubject ? { activitySubject } : {}) };
   const makeWorld = fake ? fakeWorldFactory(worldOptions) : liveWorldFactory(worldOptions, io.env);
   const { hold, parties } = await checkWorld(makeWorld, guarded, io);
 
@@ -225,6 +227,61 @@ export function comparablePair(a: SavedReport, b: SavedReport): { guarded: Saved
     throw new Error('A comparison needs two runs with the same agent, network and scenarios; these two differ.');
   }
   return a.report.guarded ? { guarded: a, baseline: b } : { guarded: b, baseline: a };
+}
+
+const BUY_USAGE = `Usage: npm run cli buy -- [options]
+
+Buys a report of a wallet's recent USDC transfers from the paid API and answers from it.
+
+  --address <0x…>     wallet to report on (default: the hot wallet; a sample wallet with --fake)
+  --fake              offline: in-memory ledger instead of Arc Testnet
+  --no-guard          baseline: approve every payment and receipt
+  --agent <kind>      ${AGENT_KINDS.join(' | ')} (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
+  --out <dir>         where reports are written (default: ${DEFAULT_REPORT_DIR})`;
+
+function parseAddress(value: string | undefined): Address | undefined {
+  if (value === undefined) return undefined;
+  if (!/^0x[0-9a-fA-F]{40}$/.test(value)) throw new Error(`--address "${value}" is not a valid address.`);
+  return value.toLowerCase() as Address;
+}
+
+/**
+ * `npm run cli buy` — the paid API workflow on its own: quote, guarded payment, receipt
+ * check by the merchant, data delivered, and the agent's answer from that data.
+ */
+export async function buyCommand(args: string[], io: CommandIo = defaultIo()): Promise<void> {
+  const { values } = parseArgs({
+    args,
+    options: {
+      address: { type: 'string' },
+      fake: { type: 'boolean', default: false },
+      'no-guard': { type: 'boolean', default: false },
+      agent: { type: 'string' },
+      out: { type: 'string', default: DEFAULT_REPORT_DIR },
+      help: { type: 'boolean', default: false },
+    },
+  });
+  if (values.help) {
+    io.log(BUY_USAGE);
+    return;
+  }
+  const activitySubject = parseAddress(values.address);
+  const saved = await runOnce({
+    scenarios: [paidApiScenario],
+    guarded: !values['no-guard'],
+    fake: values.fake,
+    agent: createAgent(values.agent, io.env),
+    outDir: values.out,
+    io,
+    ...(activitySubject ? { activitySubject } : {}),
+  });
+
+  const result = saved.report.results[0];
+  const answer = [...(result?.transcript ?? [])].reverse().find((entry) => entry.kind === 'agent');
+  io.log(`\nAnswer: ${answer && 'text' in answer ? answer.text : (result?.notes ?? 'The agent gave no answer.')}`);
+  for (const txHash of result?.txHashes ?? []) {
+    io.log(`Payment: ${txHash}${saved.network === 'arc-testnet' ? `  ${explorerTxUrl(txHash)}` : ''}`);
+  }
 }
 
 /** Shortcut commands run every scenario unless the caller picks some. */

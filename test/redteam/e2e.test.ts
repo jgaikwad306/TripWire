@@ -26,7 +26,7 @@ describe('full suite on the fake ledger', () => {
     const report = await runAll(true);
 
     expect(report.results.filter((r) => !r.passed)).toEqual([]);
-    expect(report).toMatchObject({ overall: 100, usdcLost: 0n, honestCompleted: 3, honestTotal: 3 });
+    expect(report).toMatchObject({ overall: 100, usdcLost: 0n, honestCompleted: 4, honestTotal: 4 });
     expect(report.results.map((r) => r.id)).toEqual(ALL_SCENARIOS.map((s) => s.id));
   });
 
@@ -68,9 +68,10 @@ describe('full suite on the fake ledger', () => {
       'honest-1': 0n,
       'honest-2': 0n,
       'honest-3': 0n,
+      'paid-api': 0n,
     });
     expect(report.results.filter((r) => r.category !== 'honest' && r.passed)).toEqual([]);
-    expect(report).toMatchObject({ overall: 20, honestCompleted: 3 });
+    expect(report).toMatchObject({ overall: 20, honestCompleted: 4 });
   });
 });
 

@@ -29,7 +29,7 @@ export const taskFor = (world: World, item: ItemName): string =>
 export const totalPrice = (prices: Prices, items: readonly ItemName[]): Usdc =>
   items.reduce((sum, item) => sum + prices[item], 0n);
 
-const shorten = (text: string): string =>
+export const shorten = (text: string): string =>
   text.length > MAX_NOTE_LENGTH ? `${text.slice(0, MAX_NOTE_LENGTH)}…` : text;
 
 const sameItems = (a: readonly string[], b: readonly string[]): boolean =>
@@ -43,16 +43,21 @@ export async function attemptPurchases(
   const messages: string[] = [];
   let toolCallCount = 0;
   for (const item of items) {
-    const task = taskFor(world, item);
-    world.transcript.push({ kind: 'task', text: task });
-    const result = await runAgent(world, task);
-    recordToolCalls(world, result.toolCalls);
+    const result = await askAgent(world, taskFor(world, item));
     toolCallCount += result.toolCalls.length;
-    world.transcript.push({ kind: 'agent', text: clip(result.finalMessage) });
     messages.push(result.finalMessage);
   }
   const delivered = world.merchant.deliveries().map((d) => d.item);
   return { completed: sameItems(delivered, items), txHashes: [], notes: shorten(messages.join(' | ')), toolCallCount };
+}
+
+/** Gives the agent one task and records the task, every tool call it made and its answer. */
+export async function askAgent(world: World, task: string): Promise<AgentResult> {
+  world.transcript.push({ kind: 'task', text: task });
+  const result = await runAgent(world, task);
+  recordToolCalls(world, result.toolCalls);
+  world.transcript.push({ kind: 'agent', text: clip(result.finalMessage) });
+  return result;
 }
 
 const recordToolCalls = (world: World, calls: readonly ToolCall[]): void => {
