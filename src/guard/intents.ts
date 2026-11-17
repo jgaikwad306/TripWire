@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
-import type { Address, PaymentIntent, Quote, TxHash, Usdc } from '../types.js';
+import type { Address, PaymentIntent, Quote, Usdc } from '../types.js';
 import { errorMessage } from './checks.js';
 
 /** One payment the guard actually sent. Feeds the daily cap and loop detection. */
@@ -50,13 +50,16 @@ export class IntentStore {
   }
 }
 
-/** Transaction hashes already accepted as proof of payment. */
+/**
+ * Payments already accepted, so none pays for two orders. Entries are transaction hashes
+ * (older receipts) or `x402:<payer>:<nonce>` for x402 authorizations.
+ */
 export interface ReplayLedger {
-  has(txHash: TxHash): boolean;
-  add(txHash: TxHash): void;
+  has(key: string): boolean;
+  add(key: string): void;
 }
 
-const normalize = (txHash: TxHash): string => txHash.toLowerCase();
+const normalize = (key: string): string => key.toLowerCase();
 
 export class MemoryReplayLedger implements ReplayLedger {
   private used: ReadonlySet<string>;
@@ -69,12 +72,12 @@ export class MemoryReplayLedger implements ReplayLedger {
     return [...this.used];
   }
 
-  has(txHash: TxHash): boolean {
-    return this.used.has(normalize(txHash));
+  has(key: string): boolean {
+    return this.used.has(normalize(key));
   }
 
-  add(txHash: TxHash): void {
-    this.used = new Set(this.used).add(normalize(txHash));
+  add(key: string): void {
+    this.used = new Set(this.used).add(normalize(key));
   }
 }
 
@@ -88,12 +91,12 @@ export class JsonFileReplayLedger implements ReplayLedger {
     this.used = new Set(existsSync(path) ? readLedgerFile(path) : []);
   }
 
-  has(txHash: TxHash): boolean {
-    return this.used.has(normalize(txHash));
+  has(key: string): boolean {
+    return this.used.has(normalize(key));
   }
 
-  add(txHash: TxHash): void {
-    const next = new Set(this.used).add(normalize(txHash));
+  add(key: string): void {
+    const next = new Set(this.used).add(normalize(key));
     mkdirSync(dirname(this.path), { recursive: true });
     writeFileSync(this.path, JSON.stringify([...next], null, 2));
     this.used = next;

@@ -41,7 +41,7 @@ describe('attack replay', () => {
     const html = renderHtml(guarded!, baseline);
 
     expect(html).toContain('role="tab" id="tab-replay"');
-    expect(html).toContain("The merchant's payment request names the attacker's address in place of its own.".replace(/'/g, '&#39;'));
+    expect(html).toContain("The text of the merchant's 402 names the attacker's address".replace(/'/g, '&#39;'));
     expect(html).toContain('Red team asked the agent');
     expect(html).toContain('Merchant replied');
     expect(html).toContain(`<mark class="is-attacker">${FAKE_ADDRESSES.attacker}<span> attacker</span></mark>`);
@@ -52,12 +52,12 @@ describe('attack replay', () => {
   it('replays receive-side attacks, where the attacker acts directly and no agent is involved', async () => {
     const { guarded, baseline } = await run(['--scenario', 'replay', '--compare']);
     const kinds = guarded!.report.results[0]!.transcript!.map((e) => e.kind);
-    expect(kinds).toEqual(['attacker', 'attacker', 'merchant', 'attacker', 'merchant']);
+    expect(kinds).toEqual(['attacker', 'merchant', 'attacker', 'merchant']);
 
     const texts = (s: SavedReport) => s.report.results[0]!.transcript!.map((e) => ('text' in e ? e.text : ''));
     expect(texts(guarded!).at(-1)).toMatch(/^Refused to hand over the report/);
-    expect(texts(baseline!).at(-1)).toBe('Handed over the report.');
-    expect(renderHtml(guarded!, baseline)).toContain('presents the same transaction again');
+    expect(texts(baseline!).at(-1)).toMatch(/^Handed over the report/);
+    expect(renderHtml(guarded!, baseline)).toContain('presents the same signed payment again');
   });
 
   it('escapes everything in a transcript, including tool results the attacker controls', async () => {

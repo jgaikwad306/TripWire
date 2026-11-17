@@ -18,14 +18,17 @@ const fake = (guarded: boolean, agent: Agent = new NaiveAgent()): WorldFactory =
 
 describe('a scenario that never tested its attack does not pass', () => {
   it('fails the replay scenario when the legitimate first claim is rejected', async () => {
-    // The customer's payment arrives short, so the guard rejects the first, honest claim.
+    // The customer's wallet signs something other than the payment it sends, so the
+    // guard rejects the first, honest claim.
     const shortPaying: WorldFactory = async () => {
       const world = await fake(true)();
       const inner = world.wallet;
       const wallet: WalletProvider = {
         addressOf: (role) => inner.addressOf(role),
         getBalance: (role) => inner.getBalance(role),
-        transfer: (args) => inner.transfer({ ...args, amount: args.amount / 2n }),
+        transfer: (args) => inner.transfer(args),
+        signTypedData: (role, data) =>
+          inner.signTypedData(role, { ...data, message: { ...data.message, value: BigInt(data.message.value as bigint) / 2n } }),
       };
       return { ...world, wallet };
     };

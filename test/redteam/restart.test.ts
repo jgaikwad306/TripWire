@@ -51,7 +51,7 @@ describe('buy: a restart in the middle of a purchase', () => {
     await run(['--crash-after-send'], () => { throw new Error('simulated crash'); });
 
     expect(payments()).toHaveLength(1);
-    expect(readFileSync(statePath, 'utf8')).toContain('"version": 1');
+    expect(readFileSync(statePath, 'utf8')).toContain('"version": 2');
   });
 
   it('has nothing to resume without a state file', async () => {

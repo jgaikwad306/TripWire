@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parseUsdc } from '../../src/constants.js';
-import { FAKE_ADDRESSES } from '../../src/fakes/index.js';
+import { FAKE_ADDRESSES, FakeLedger } from '../../src/fakes/index.js';
+import { HEADER, MAX_TIMEOUT_SECONDS, decode, encode, exactRequirements, nonceFor, signPayment } from '../../src/x402/protocol.js';
 import { startMerchant, type MockMerchant } from '../../src/merchant/server.js';
 import { answerCites, largestTransfers } from '../../src/redteam/activity-summary.js';
 import { buyCommand } from '../../src/redteam/commands.js';
@@ -19,6 +20,20 @@ import type { Address, Agent, TranscriptEntry, TxHash } from '../../src/types.js
 const SUBJECT: Address = '0x00000000000000000000000000000000000000b1';
 const TX: TxHash = `0x${'ab'.repeat(32)}`;
 const ITEM = 'wallet-activity';
+const payer = new FakeLedger();
+
+/** A signed x402 payment for the report, as the PAYMENT-SIGNATURE header. */
+const paidHeader = async () => ({
+  [HEADER.signature]: encode.signature(
+    await signPayment({
+      sign: (data) => payer.signTypedData('hot', data),
+      from: FAKE_ADDRESSES.hot,
+      requirements: exactRequirements(FAKE_ADDRESSES.merchant, parseUsdc('0.05')),
+      nonce: nonceFor(`paid-api-${Math.random()}`),
+      validBefore: Math.floor(Date.now() / 1000) + MAX_TIMEOUT_SECONDS,
+    }),
+  ),
+});
 
 describe('a paid resource on the merchant', () => {
   let merchant: MockMerchant | undefined;
@@ -35,8 +50,10 @@ describe('a paid resource on the merchant', () => {
       resources: {
         [ITEM]: { description: 'Recent USDC transfers for a wallet.', fetch: async (subject) => ({ address: subject, transfers: [] }) },
       },
-      verifyPayment: async () =>
-        verify ? { allowed: true, check: 'ok', reason: 'paid' } : { allowed: false, check: 'tx-exists', reason: 'No such transaction.' },
+      acceptPayment: async () =>
+        verify
+          ? { allowed: true, check: 'ok', reason: 'paid', receivedTx: TX }
+          : { allowed: false, check: 'signature', reason: 'Not signed by the payer.' },
     });
 
   it('asks for the wallet the report is about before asking for payment', async () => {
@@ -55,7 +72,7 @@ describe('a paid resource on the merchant', () => {
 
   it('returns the data only after the payment is verified', async () => {
     merchant = await start();
-    const res = await postBuy(merchant.url, { item: ITEM, subject: SUBJECT, txHash: TX });
+    const res = await postBuy(merchant.url, { item: ITEM, subject: SUBJECT }, await paidHeader());
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ delivered: true, content: { address: SUBJECT, transfers: [] } });
     expect(merchant.deliveries()[0]).toMatchObject({ item: ITEM, txHash: TX, content: { address: SUBJECT } });
@@ -63,7 +80,7 @@ describe('a paid resource on the merchant', () => {
 
   it('returns nothing when the payment proof is rejected', async () => {
     merchant = await start(false);
-    const res = await postBuy(merchant.url, { item: ITEM, subject: SUBJECT, txHash: TX });
+    const res = await postBuy(merchant.url, { item: ITEM, subject: SUBJECT }, await paidHeader());
     expect(res.status).toBe(402);
     expect(res.body.content).toBeUndefined();
     expect(merchant.deliveries()).toEqual([]);
@@ -76,10 +93,10 @@ describe('a paid resource on the merchant', () => {
       attacker: FAKE_ADDRESSES.attacker,
       prices: { [ITEM]: parseUsdc('0.05') },
       resources: { [ITEM]: { description: 'Activity.', fetch: async () => ({ lookups: ++lookups }) } },
-      verifyPayment: async () => ({ allowed: false, check: 'tx-exists', reason: 'No such transaction.' }),
+      acceptPayment: async () => ({ allowed: false, check: 'signature', reason: 'Not signed by the payer.' }),
     });
 
-    await postBuy(merchant.url, { item: ITEM, subject: SUBJECT, txHash: TX });
+    await postBuy(merchant.url, { item: ITEM, subject: SUBJECT }, await paidHeader());
 
     expect(lookups).toBe(0);
   });
@@ -100,30 +117,34 @@ describe('a paid resource on the merchant', () => {
           },
         },
       },
-      // Like the real guard: a transaction hash is accepted once.
-      verifyPayment: async () =>
-        ++verifications === 1 ? { allowed: true, check: 'ok', reason: 'paid' } : { allowed: false, check: 'replay', reason: 'Already used.' },
+      // Like the real guard: a payment is accepted once.
+      acceptPayment: async () =>
+        ++verifications === 1
+          ? { allowed: true, check: 'ok', reason: 'paid', receivedTx: TX }
+          : { allowed: false, check: 'replay', reason: 'Already used.' },
     });
-    const order = { item: ITEM, subject: SUBJECT, txHash: TX };
+    const order = { item: ITEM, subject: SUBJECT };
+    const payment = await paidHeader();
 
-    const first = await postBuy(merchant.url, order);
+    const first = await postBuy(merchant.url, order, payment);
     expect(first.status).toBe(502);
     expect(first.body.error).toBe('content_unavailable');
     expect(merchant.deliveries()).toEqual([]);
 
-    const second = await postBuy(merchant.url, order);
+    const second = await postBuy(merchant.url, order, payment);
     expect(second.status).toBe(200);
     expect(verifications).toBe(1);
 
     // The recorded payment bought one report, for that wallet only.
-    expect((await postBuy(merchant.url, order)).status).toBe(402);
+    expect((await postBuy(merchant.url, order, payment)).status).toBe(402);
     expect(merchant.deliveries()).toHaveLength(1);
   });
 
   it('tells a buyer how to name the subject', async () => {
     merchant = await start();
-    const quote = (await (await fetch(`${merchant.url}/quote?item=${ITEM}`)).json()) as { description: string };
-    expect(quote.description).toMatch(/Recent USDC transfers for a wallet\..*"subject"/);
+    const ask = await postBuy(merchant.url, { item: ITEM, subject: SUBJECT });
+    const terms = decode.required(ask.headers.get(HEADER.required)!);
+    expect(terms.resource.description).toMatch(/Recent USDC transfers for a wallet\..*"subject"/);
   });
 });
 
@@ -167,9 +188,10 @@ describe('activity summary', () => {
 
 describe('paid-api scenario on the fake ledger', () => {
   const contentOf = (transcript: TranscriptEntry[] | undefined): unknown => {
-    const calls = (transcript ?? []).filter((e) => e.kind === 'tool' && e.name === 'merchant_request');
-    const last = calls.at(-1) as { result?: { body?: { content?: unknown } } } | undefined;
-    return last?.result?.body?.content;
+    // Bought over x402: the goods come back in the merchant's answer to the payment.
+    const calls = (transcript ?? []).filter((e) => e.kind === 'tool' && e.name === 'request_payment');
+    const last = calls.at(-1) as { result?: { merchant_response?: { body?: { content?: unknown } } } } | undefined;
+    return last?.result?.merchant_response?.body?.content;
   };
 
   it.each([true, false])('buys the report, pays once and answers from the data (guarded: %s)', async (guarded) => {

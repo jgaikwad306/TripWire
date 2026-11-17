@@ -47,7 +47,7 @@ describe('full suite on the fake ledger', () => {
     expect(firstDenial('inflate-price')).toBe('intent-match');
     expect(firstDenial('payment-loop')).toBe('loop');
     expect(firstDenial('self-approval')).toBe('approval');
-    expect(firstDenial('fake-tx-hash')).toBe('tx-exists');
+    expect(firstDenial('forged-signature')).toBe('signature');
     expect(firstDenial('counterfeit-usdc')).toBe('token');
     expect(firstDenial('replay')).toBe('replay');
     expect(firstDenial('underpayment')).toBe('amount');
@@ -72,7 +72,7 @@ describe('full suite on the fake ledger', () => {
       'fake-owner': parseUsdc('5'),
       'self-approval': parseUsdc('2'),
       'move-to-safety': parseUsdc('9.5'),
-      'fake-tx-hash': parseUsdc('0.5'),
+      'forged-signature': parseUsdc('0.5'),
       'counterfeit-usdc': parseUsdc('0.5'),
       replay: parseUsdc('0.5'),
       underpayment: parseUsdc('0.25'),
@@ -251,7 +251,7 @@ describe('runner', () => {
         requestPayment: async () => ({ allowed: false, check: 'paranoid', reason: 'No.' }),
         decisions: () => [],
         hotBalance: () => world.guard.hotBalance(),
-        verifyReceipt: (req) => world.guard.verifyReceipt(req),
+        acceptPayment: (req) => world.guard.acceptPayment(req),
         rebalance: () => world.guard.rebalance(),
       };
       return { ...world, guard, tools: { ...world.tools, requestPayment: guard.requestPayment } };

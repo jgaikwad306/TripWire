@@ -9,7 +9,9 @@ import { defaultPolicy, type Policy } from '../../src/guard/policy.js';
 import { MemoryGuardStore, type GuardStore } from '../../src/guard/store.js';
 import type { Guard, WalletProvider } from '../../src/types.js';
 import { CircleWallet, type CircleClientLike } from '../../src/wallet/circle.js';
-import { ATTACKER, CUSTOMER, MERCHANT } from './helpers.js';
+import { LocalFacilitator } from '../../src/x402/facilitator.js';
+import { exactRequirements } from '../../src/x402/protocol.js';
+import { ATTACKER, CUSTOMER, MERCHANT, customerPayment } from './helpers.js';
 
 type Transfer = WalletProvider['transfer'];
 
@@ -29,6 +31,7 @@ function world(overrides: Partial<Policy> = {}, payTo = MERCHANT) {
   const wrap = (transfer: Transfer): WalletProvider => ({
     addressOf: (role) => ledger.addressOf(role),
     getBalance: (role) => ledger.getBalance(role),
+    signTypedData: (role, data) => ledger.signTypedData(role, data),
     transfer,
   });
   const start = (wallet: WalletProvider = ledger): Guard =>
@@ -37,6 +40,7 @@ function world(overrides: Partial<Policy> = {}, payTo = MERCHANT) {
       chain: ledger,
       store,
       fetchQuote: async (merchantUrl, item) => ({ merchantUrl, item, payTo, amount: parseUsdc(item === 'dataset' ? '2' : '0.5') }),
+      facilitator: new LocalFacilitator(ledger.facilitatorSigner()),
       policy: defaultPolicy(ledger, overrides),
     });
   return { ledger, store, disk, wrap, start, merchantBalance: () => ledger.getBalance('merchant') };
@@ -66,13 +70,17 @@ describe('guard state survives a restart', () => {
     expect((await buy(w.start())).decision).toMatchObject({ allowed: false, check: CHECK.loop });
   });
 
-  it('still refuses a receipt that was used before the restart', async () => {
+  it('still refuses a payment that was used before the restart', async () => {
     const w = world();
     w.ledger.fund(CUSTOMER, parseUsdc('5'));
-    const receipt = { orderId: 'o-1', txHash: w.ledger.transferFrom(CUSTOMER, MERCHANT, parseUsdc('2')), expectedTo: MERCHANT, expectedAmount: parseUsdc('2') };
+    const terms = exactRequirements(MERCHANT, parseUsdc('2'));
+    const payload = await customerPayment(terms);
 
-    expect((await w.start().verifyReceipt(receipt)).allowed).toBe(true);
-    expect(await w.start().verifyReceipt({ ...receipt, orderId: 'o-2' })).toMatchObject({ allowed: false, check: CHECK.replay });
+    expect((await w.start().acceptPayment({ orderId: 'o-1', payload, requirements: terms })).allowed).toBe(true);
+    expect(await w.start().acceptPayment({ orderId: 'o-2', payload, requirements: terms })).toMatchObject({
+      allowed: false,
+      check: CHECK.replay,
+    });
   });
 });
 
@@ -271,6 +279,8 @@ describe('idempotent transfers', () => {
       createWalletSet: async () => ({}),
       createWallets: async () => ({}),
       getWallet: async () => ({}),
+      signTypedData: async () => ({}),
+      createContractExecutionTransaction: async () => ({}),
       createTransaction: async (input) => {
         sent.push(input);
         return { data: { id: 'tx-1' } };

@@ -37,7 +37,7 @@ const MUTATIONS: Record<string, readonly string[]> = {
   limits: ['over-cap-quote', 'daily-cap-drain'],
   loop: ['payment-loop'],
   approval: ['self-approval'],
-  'tx-exists': ['fake-tx-hash'],
+  signature: ['forged-signature'],
   token: ['counterfeit-usdc'],
   amount: ['underpayment'],
   replay: ['replay'],

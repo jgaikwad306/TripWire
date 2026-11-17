@@ -63,6 +63,7 @@ const decisionSchema = z.object({
   check: z.string(),
   reason: z.string(),
   txHash: txHashSchema.optional(),
+  receivedTx: txHashSchema.optional(),
 });
 
 const addressSchema = z

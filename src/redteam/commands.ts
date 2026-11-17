@@ -15,7 +15,15 @@ import { runScenarios } from './runner.js';
 import { ALL_SCENARIOS, findScenario, type RedTeamScenario } from './scenarios/index.js';
 import { paidApiScenario } from './scenarios/paid-api.js';
 import { buildReport } from './score.js';
-import { fakeWorldFactory, liveWorldFactory, runPolicy, type World, type WorldFactory, type WorldOptions } from './world.js';
+import {
+  fakeWorldFactory,
+  liveWorldFactory,
+  runPolicy,
+  type FacilitatorChoice,
+  type World,
+  type WorldFactory,
+  type WorldOptions,
+} from './world.js';
 
 const AGENT_KINDS = ['naive', 'grok', 'grok-careful'] as const;
 type AgentKind = (typeof AGENT_KINDS)[number];
@@ -29,6 +37,9 @@ const RUN_USAGE = `Usage: npm run cli run -- (--all | --scenario <id> ...) [opti
   --compare           run with the guard, then without, and compare
   --agent <kind>      ${AGENT_KINDS.join(' | ')} (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
   --out <dir>         where reports are written (default: ${DEFAULT_REPORT_DIR})
+  --facilitator <f>   on Arc, who settles x402 payments: circle (default; Circle's Facilitator
+                      Service, falling back to local if its keyless trial runs out) | local
+                      (the official x402 facilitator code run here, the merchant wallet pays gas)
 
 Scenario ids: ${ALL_SCENARIOS.map((s) => s.id).join(', ')}`;
 
@@ -139,11 +150,14 @@ async function runOnce(opts: {
   approval?: WorldOptions['approval'];
   guardStore?: WorldOptions['guardStore'];
   afterPaymentSent?: WorldOptions['afterPaymentSent'];
+  facilitator?: FacilitatorChoice;
 }): Promise<SavedReport> {
   const { scenarios, guarded, fake, agent, outDir, io, activitySubject, approval, guardStore, afterPaymentSent } = opts;
   const worldOptions: WorldOptions = {
     guarded,
     agent,
+    ...(opts.facilitator ? { facilitator: opts.facilitator } : {}),
+    onFacilitatorSwitch: (reason) => io.log(`  NOTE  ${reason}`),
     ...(activitySubject ? { activitySubject } : {}),
     ...(approval ? { approval } : {}),
     ...(guardStore ? { guardStore } : {}),
@@ -193,6 +207,7 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
       compare: { type: 'boolean', default: false },
       agent: { type: 'string' },
       out: { type: 'string', default: DEFAULT_REPORT_DIR },
+      facilitator: { type: 'string' },
       help: { type: 'boolean', default: false },
     },
   });
@@ -200,6 +215,7 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
     io.log(RUN_USAGE);
     return;
   }
+  const facilitator = parseFacilitator(values.facilitator ?? io.env.X402_FACILITATOR);
   if (values.compare && values['no-guard']) throw new Error('--compare already includes the no-guard run; drop --no-guard.');
 
   const base = {
@@ -208,6 +224,7 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
     agent: createAgent(values.agent, io.env),
     outDir: values.out,
     io,
+    ...(facilitator ? { facilitator } : {}),
   };
   if (!values.compare) {
     await runOnce({ ...base, guarded: !values['no-guard'] });
@@ -217,6 +234,12 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
   const baseline = await runOnce({ ...base, guarded: false });
   io.log(`\n${renderComparison(guarded.report, baseline.report)}`);
   io.log(`\nComparison page: ${saveHtmlReport(guarded, baseline, values.out)}`);
+}
+
+function parseFacilitator(value: string | undefined): FacilitatorChoice | undefined {
+  if (value === undefined || value === '') return undefined;
+  if (value === 'circle' || value === 'local') return value;
+  throw new Error(`Unknown facilitator "${value}". Use circle or local.`);
 }
 
 const scenarioKey = (saved: SavedReport): string =>

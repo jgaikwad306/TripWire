@@ -14,9 +14,10 @@ export function attackerAddress(env: NodeJS.ProcessEnv = process.env): Address {
 }
 
 /** The real wallet and chain reader, built from .env. This is what other lanes call. */
-export async function createLiveWallet(): Promise<{ wallet: WalletProvider; chain: ChainReader }> {
+export async function createLiveWallet(): Promise<{ wallet: CircleWallet; chain: ArcChainReader }> {
   const client = createCircleClient();
   const chain = new ArcChainReader();
-  const wallet = new CircleWallet(client, chain, await loadWallets(client), attackerAddress());
+  const key = process.env.ATTACKER_PRIVATE_KEY as Hex | undefined;
+  const wallet = new CircleWallet(client, chain, await loadWallets(client), attackerAddress(), key ? { attackerKey: key } : {});
   return { wallet, chain };
 }
