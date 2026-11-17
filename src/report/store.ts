@@ -1,14 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { Report, TxHash } from '../types.js';
+import type { Report, TxHash, Usdc } from '../types.js';
 
 export type Network = 'fake' | 'arc-testnet';
+
+/**
+ * The hold rule as it stood when a guarded run began: how much the agent could spend
+ * and how much sat in the vault beyond its reach.
+ */
+export interface HoldSnapshot {
+  /** The most the hot wallet may hold; the guard sweeps anything above it. */
+  hotCap: Usdc;
+  hot: Usdc;
+  vault: Usdc;
+  /** Moved from the hot wallet to the vault just before this run. */
+  swept: Usdc;
+}
 
 /** What a report file holds: the report plus where it was run. */
 export interface SavedReport {
   network: Network;
   report: Report;
+  /** Present for guarded runs recorded since the hold rule was added to reports. */
+  hold?: HoldSnapshot;
 }
 
 export const DEFAULT_REPORT_DIR = 'reports';
@@ -65,6 +80,7 @@ const savedReportSchema = z.object({
     honestTotal: z.number(),
     results: z.array(resultSchema),
   }),
+  hold: z.object({ hotCap: usdcSchema, hot: usdcSchema, vault: usdcSchema, swept: usdcSchema }).optional(),
 });
 
 export function serializeReport(saved: SavedReport): string {

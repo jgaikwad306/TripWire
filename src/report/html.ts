@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { explorerTxUrl, formatUsdc } from '../constants.js';
 import type { Report, ScenarioCategory, ScenarioResult, TxHash } from '../types.js';
-import type { SavedReport } from './store.js';
+import type { HoldSnapshot, SavedReport } from './store.js';
 
 /**
  * One self-contained HTML page for a run: no scripts, no build step, safe to open from
@@ -111,6 +111,38 @@ function scorePanel(report: Report, label: string): string {
         <div><dt>Honest purchases completed</dt><dd>${report.honestCompleted} of ${report.honestTotal}</dd></div>
       </dl>
     </section>`;
+}
+
+/** Balances to the cent, rounded down: gas leaves six-decimal dust that only adds noise here. */
+const cents = (units: bigint): string => formatUsdc((units / 10_000n) * 10_000n);
+
+/**
+ * The hold rule: how the money was split between what the agent can spend and what it
+ * cannot touch. The bar is proportional, so a large vault visibly dwarfs the hot wallet.
+ */
+function holdSection(hold: HoldSnapshot, compared: boolean): string {
+  const total = hold.hot + hold.vault;
+  const hotShare = total > 0n ? Number((hold.hot * 1000n) / total) / 10 : 0;
+  const notes = [
+    hold.swept > 0n
+      ? `Before this run the guard moved ${cents(hold.swept)} USDC from the hot wallet into the vault.`
+      : '',
+    compared ? 'Without the guard nothing enforces this split.' : '',
+  ].filter(Boolean);
+  return `<section class="block">
+    <h2>What the agent could reach</h2>
+    <p>The guard keeps a capped amount in a hot wallet for spending. Everything above the cap goes to a vault that no request from the agent can move.</p>
+    <div class="reach">
+      <div class="reach-bar" role="img" aria-label="${esc(`${cents(hold.hot)} USDC within reach of the agent, ${cents(hold.vault)} USDC in the vault`)}">
+        <span class="reach-hot" style="width:${hotShare}%"></span><span class="reach-vault" style="width:${100 - hotShare}%"></span>
+      </div>
+      <dl>
+        <div><dt>Within reach of the agent</dt><dd>${esc(cents(hold.hot))} USDC <small>capped at ${esc(cents(hold.hotCap))}</small></dd></div>
+        <div class="vault"><dt>Out of reach, in the vault</dt><dd>${esc(cents(hold.vault))} USDC</dd></div>
+      </dl>
+      ${notes.length ? `<p class="reach-note">${esc(notes.join(' '))}</p>` : ''}
+    </div>
+  </section>`;
 }
 
 function outcomeCell(r: ScenarioResult | undefined, label: string, maxLoss: bigint): string {
@@ -252,6 +284,18 @@ summary:focus-visible,a:focus-visible{outline:.1875rem solid var(--ink);outline-
 .verdict{font-weight:600;margin-right:.25rem}
 .verdict-yes{color:var(--stop)}
 .verdict-no{color:var(--loss)}
+.decisions li,.said{overflow-wrap:anywhere}
+.reach{background:var(--surface);border-radius:.75rem;padding:1.5rem}
+.reach-bar{display:flex;height:.75rem;border-radius:.375rem;overflow:hidden;background:var(--line)}
+.reach-hot{background:var(--ink);min-width:.375rem}
+.reach-vault{background:var(--stop);min-width:.375rem}
+.reach dl{margin:1rem 0 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(14rem,1fr));gap:1rem}
+.reach dt{color:var(--muted);display:flex;align-items:center;gap:.5rem}
+.reach dt::before{content:"";width:.75rem;height:.75rem;border-radius:.1875rem;background:var(--ink);flex:none}
+.reach .vault dt::before{background:var(--stop)}
+.reach dd{margin:.125rem 0 0;font-size:1.5rem;font-weight:700;letter-spacing:-.01em}
+.reach dd small{font-size:.9375rem;font-weight:400;color:var(--muted)}
+.reach-note{margin-top:1rem;color:var(--muted);font-size:.9375rem}
 .txs,.said,.quiet{margin-top:.5rem;font-size:.9375rem}
 .said,.quiet{color:var(--muted)}
 .tx{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.875rem;color:var(--ink);overflow-wrap:anywhere;margin-right:.75rem}
@@ -303,6 +347,8 @@ export function renderHtml(primary: SavedReport, baseline?: SavedReport): string
     ${scorePanel(report, report.guarded ? 'With the guard' : 'Without the guard')}
     ${base ? scorePanel(base, 'Without the guard') : ''}
   </div>
+
+  ${primary.hold ? holdSection(primary.hold, Boolean(base)) : ''}
 
   <section class="block">
     <h2>What each attack did</h2>
