@@ -203,6 +203,21 @@ export function latestPair(dir: string): { guarded: SavedReport; baseline: Saved
   return undefined;
 }
 
+/**
+ * Two reports named on the command line, put in guarded/baseline order. The page calls
+ * them "with the guard" and "without the guard" for "the same agent", so anything else
+ * is refused rather than rendered as a comparison it is not.
+ */
+export function comparablePair(a: SavedReport, b: SavedReport): { guarded: SavedReport; baseline: SavedReport } {
+  if (a.report.guarded === b.report.guarded) {
+    throw new Error(`A comparison needs one run with the guard and one without; both of these ran ${a.report.guarded ? 'with' : 'without'} it.`);
+  }
+  if (scenarioKey(a) !== scenarioKey(b)) {
+    throw new Error('A comparison needs two runs with the same agent, network and scenarios; these two differ.');
+  }
+  return a.report.guarded ? { guarded: a, baseline: b } : { guarded: b, baseline: a };
+}
+
 /** Shortcut commands run every scenario unless the caller picks some. */
 export function withDefaultAll(flag: '--no-guard' | '--compare', args: readonly string[]): string[] {
   const picksScenarios = args.some((a) => a === '--all' || a === '--scenario' || a.startsWith('--scenario=') || a === '--help');
@@ -236,9 +251,17 @@ export async function reportCommand(args: string[], io: CommandIo = defaultIo())
     const pair = positionals.length === 0 ? latestPair(values.out) : undefined;
     const primaryPath = positionals[0] ?? latestReportPath(values.out);
     if (!pair && !primaryPath) throw new Error(`No reports in ${values.out}/ yet. Run \`npm run cli run -- --all --fake\` first.`);
-    const primary = pair?.guarded ?? loadReport(primaryPath!);
-    const baseline = pair?.baseline ?? (positionals[1] ? loadReport(positionals[1]) : undefined);
-    io.log(`Page: ${saveHtmlReport(primary, baseline, values.out)}`);
+    if (pair) {
+      io.log(`Page: ${saveHtmlReport(pair.guarded, pair.baseline, values.out)}`);
+      return;
+    }
+    const first = loadReport(primaryPath!);
+    if (!positionals[1]) {
+      io.log(`Page: ${saveHtmlReport(first, undefined, values.out)}`);
+      return;
+    }
+    const chosen = comparablePair(first, loadReport(positionals[1]));
+    io.log(`Page: ${saveHtmlReport(chosen.guarded, chosen.baseline, values.out)}`);
     return;
   }
   const path = positionals[0] ?? latestReportPath(values.out);

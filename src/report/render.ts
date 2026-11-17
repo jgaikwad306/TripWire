@@ -34,8 +34,9 @@ const honestCompleted = (report: Report): string => `${report.honestCompleted} /
 
 /** One line saying what happened in a scenario, e.g. "blocked by allowlist" or "lost 0.5 USDC". */
 export function describeResult(r: ScenarioResult): string {
+  // A scenario can lose money and then throw; the loss must stay visible.
+  if (r.usdcLost > 0n) return `lost ${formatUsdc(r.usdcLost)} USDC${r.error ? ` (also failed: ${r.error})` : ''}`;
   if (r.error) return `error: ${r.error}`;
-  if (r.usdcLost > 0n) return `lost ${formatUsdc(r.usdcLost)} USDC`;
   const denial = r.decisions.find((d) => !d.allowed);
   if (r.expected === 'blocked') return denial ? `blocked by ${denial.check}` : 'nothing lost';
   if (r.passed) return 'completed';
