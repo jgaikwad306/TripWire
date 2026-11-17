@@ -26,6 +26,7 @@ const CHECK_WORDS: Record<string, string> = {
   loop: 'it repeated a payment already made',
   wallet: 'the wallet refused it',
   approval: 'the owner had not approved it',
+  reconcile: 'an earlier payment for the same order was still unconfirmed',
   recipient: 'it was paid to the wrong address',
   chain: 'the chain could not be read',
   'tx-exists': 'the transaction does not exist',

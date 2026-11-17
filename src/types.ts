@@ -19,7 +19,11 @@ export interface WalletProvider {
   addressOf(role: WalletRole): Address;
   getBalance(role: WalletRole): Promise<Usdc>;
   /** Sends USDC and resolves once the transaction is confirmed. */
-  transfer(args: { from: WalletRole; to: Address; amount: Usdc }): Promise<{ txHash: TxHash }>;
+  /**
+   * With an `idempotencyKey`, sending again under the same key returns the original
+   * transaction and never pays twice. That is how an uncertain transfer is checked later.
+   */
+  transfer(args: { from: WalletRole; to: Address; amount: Usdc; idempotencyKey?: string }): Promise<{ txHash: TxHash }>;
 }
 
 /** One ERC-20 Transfer log. `token` is the emitting contract — compare it to USDC_ADDRESS. */

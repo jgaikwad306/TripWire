@@ -239,7 +239,7 @@ describe('guard: quote validation and wallet failures', () => {
     expect(decision).toMatchObject({ allowed: false, check: CHECK.replay });
   });
 
-  it('closes an intent whose transfer failed, since the money may have moved', async () => {
+  it('settles a transfer whose outcome was unknown before paying for that order again', async () => {
     const real = ledger();
     let failing = true;
     const flaky: WalletProvider = {
@@ -261,9 +261,14 @@ describe('guard: quote validation and wallet failures', () => {
     const paid = await guard.requestPayment({ intentId: fresh.id, payTo: fresh.payTo, amount: fresh.amount, reason: '' });
 
     expect(failed).toMatchObject({ allowed: false, check: CHECK.wallet });
-    expect(retried).toMatchObject({ allowed: false, check: CHECK.loop });
+    // The retry asks the wallet about the earlier attempt under the same key. It goes
+    // through this time, and the retry is given that transaction instead of paying again.
+    expect(retried.allowed).toBe(true);
+    expect(retried.reason).toMatch(/recovered/);
+    // A later purchase of the same item is a new payment.
     expect(paid.allowed).toBe(true);
-    expect(await real.getBalance('merchant')).toBe(parseUsdc('0.5'));
+    expect(paid.txHash).not.toBe(retried.txHash);
+    expect(await real.getBalance('merchant')).toBe(parseUsdc('1'));
   });
 });
 
