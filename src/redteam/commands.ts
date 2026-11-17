@@ -5,13 +5,13 @@ import { saveHtmlReport } from '../report/html.js';
 import { CAREFUL_SYSTEM_PROMPT, GrokAgent } from '../agent/grok.js';
 import { ARC_TESTNET, formatUsdc } from '../constants.js';
 import { describeResult, renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
-import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, saveReport, type SavedReport } from '../report/store.js';
+import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, saveReport, type HoldSnapshot, type SavedReport } from '../report/store.js';
 import type { Agent } from '../types.js';
 import { NaiveAgent } from './naive-agent.js';
 import { runScenarios } from './runner.js';
 import { ALL_SCENARIOS, findScenario, type RedTeamScenario } from './scenarios/index.js';
 import { buildReport } from './score.js';
-import { fakeWorldFactory, liveWorldFactory, type World, type WorldFactory } from './world.js';
+import { fakeWorldFactory, liveWorldFactory, runPolicy, type World, type WorldFactory } from './world.js';
 
 const AGENT_KINDS = ['naive', 'grok', 'grok-careful'] as const;
 type AgentKind = (typeof AGENT_KINDS)[number];
@@ -86,16 +86,26 @@ export async function sweepHot(world: World, io: CommandIo): Promise<bigint> {
  * scenario runs. On Arc it also reports the hot balance, because an earlier no-guard
  * run may have drained it and every scenario shares that wallet.
  */
-async function checkWorld(makeWorld: WorldFactory, io: CommandIo): Promise<void> {
+async function checkWorld(makeWorld: WorldFactory, guarded: boolean, io: CommandIo): Promise<HoldSnapshot | undefined> {
   const world = await makeWorld();
   try {
-    if (world.network === 'fake') return;
-    await sweepHot(world, io);
+    // Offline every scenario starts from a fresh ledger, so there is nothing to sweep.
+    const swept = world.network === 'fake' ? 0n : await sweepHot(world, io);
     const hot = await world.wallet.getBalance('hot');
-    io.log(`Hot wallet ${world.wallet.addressOf('hot')} holds ${formatUsdc(hot)} USDC.`);
-    if (hot < world.prices.dataset * HOT_BALANCE_NEEDED_IN_DATASETS) {
-      io.log(`WARNING: that is low for a full run. Top it up at ${ARC_TESTNET.faucetUrl} or expect failed purchases.`);
+    if (world.network !== 'fake') {
+      io.log(`Hot wallet ${world.wallet.addressOf('hot')} holds ${formatUsdc(hot)} USDC.`);
+      if (hot < world.prices.dataset * HOT_BALANCE_NEEDED_IN_DATASETS) {
+        io.log(`WARNING: that is low for a full run. Top it up at ${ARC_TESTNET.faucetUrl} or expect failed purchases.`);
+      }
     }
+    // Without a guard nothing enforces a cap, so there is no hold rule to record.
+    if (!guarded) return undefined;
+    return {
+      hotCap: runPolicy(world.wallet, world.prices).hotBalanceCap,
+      hot,
+      vault: await world.wallet.getBalance('vault'),
+      swept,
+    };
   } finally {
     await world.close();
   }
@@ -112,7 +122,7 @@ async function runOnce(opts: {
   const { scenarios, guarded, fake, agent, outDir, io } = opts;
   const worldOptions = { guarded, agent };
   const makeWorld = fake ? fakeWorldFactory(worldOptions) : liveWorldFactory(worldOptions, io.env);
-  await checkWorld(makeWorld, io);
+  const hold = await checkWorld(makeWorld, guarded, io);
 
   io.log(`\nRunning ${scenarios.length} scenario(s): agent ${agent.name}, guard ${guarded ? 'ON' : 'OFF'}, ${fake ? 'fake ledger' : 'Arc Testnet'}`);
   const startedAt = new Date().toISOString();
@@ -123,6 +133,7 @@ async function runOnce(opts: {
   const saved: SavedReport = {
     network: fake ? 'fake' : 'arc-testnet',
     report: buildReport(results, { agentName: agent.name, guarded, startedAt }),
+    ...(hold ? { hold } : {}),
   };
   const paths = saveReport(saved, renderMarkdown(saved), outDir);
   const htmlPath = saveHtmlReport(saved, undefined, outDir);
