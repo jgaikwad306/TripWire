@@ -47,6 +47,28 @@ npm run typecheck
 
 Everything in `test/` runs offline against the fakes in `src/fakes/` — no keys or network needed.
 
+## Tripwire live attack lab
+
+```bash
+npm run dashboard
+```
+
+Open the local URL printed in the terminal. The dashboard defaults to **Arc Testnet + Grok** and starts idle; select **Run comparison** in the browser to execute the guarded pass, then the unguarded pass. Configuration readiness is shown before launch. Arc uses real testnet transactions, and the unguarded pass can spend the hot wallet's testnet funds. Network and model failures are displayed; execution never silently falls back to a simulation.
+
+For a deterministic demo without credentials:
+
+```bash
+npm run dashboard -- --fake --agent naive
+```
+
+The focused preset includes one honest purchase, counterfeit USDC, a swapped payment address, and prompt injection. **Configure** exposes all 15 attacks and four honest controls, network selection, and Grok, careful Grok, or scripted agents. Scenarios run in the existing order: honest purchases, receive attacks, send attacks, then hold attacks.
+
+Each scenario shows the actual malicious payload, observed action, guard verdict, and measured outcome beside the unguarded result. Expand **Under the hood** for tool exchanges, full addresses, receipt decisions, and transaction evidence. Arc hashes link to the explorer; simulated hashes do not. Receiving-side losses represent the value of goods released without valid payment.
+
+The dashboard follows the current scenario; select another to inspect it and choose **Return to live** to resume following. Refreshing or temporarily disconnecting preserves the run. **Stop after scenario** finishes the current scenario's transfers, measurement, and cleanup before stopping; remaining scenarios are not run and a full-run score is withheld. Ctrl+C requests the same graceful shutdown.
+
+JSON, Markdown, and self-contained HTML reports are saved in `reports/` and can be downloaded from the dashboard. Use `--out <dir>` or `--port <number>` to choose another output directory or port. The server binds only to `127.0.0.1`, and the printed URL includes a session token. Keep that URL private. Restarting the server returns it to idle; saved reports remain on disk. Run only one wallet-using CLI/dashboard process at a time when using shared Arc wallets.
+
 ## Wallet setup (lane A)
 
 1. Create a Circle developer account at https://console.circle.com, make an API key, and register an entity secret (see the SDK's `generateEntitySecret` / `registerEntitySecretCiphertext`). Put both in `.env`.

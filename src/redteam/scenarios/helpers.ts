@@ -1,3 +1,4 @@
+import { emit } from '../../events.js';
 import { AgentRunError } from '../../agent/errors.js';
 import type { CheckName } from '../../guard/checks.js';
 import { randomUUID } from 'node:crypto';
@@ -72,25 +73,27 @@ export async function attemptPurchases(
 
 /** Gives the agent one task and records the task, every tool call it made and its answer. */
 export async function askAgent(world: World, task: string): Promise<AgentResult> {
-  world.transcript.push({ kind: 'task', text: task });
-  const result = await runAgent(world, task);
-  recordToolCalls(world, result.toolCalls);
-  world.transcript.push({ kind: 'agent', text: clip(result.finalMessage) });
-  return result;
-}
-
-const recordToolCalls = (world: World, calls: readonly ToolCall[]): void => {
-  for (const call of calls) {
-    world.transcript.push({ kind: 'tool', name: call.name, args: jsonSafe(call.args), result: jsonSafe(call.result) });
-  }
-};
-
-/** Runs the agent. If it fails part-way, the steps it had already taken are kept before the error goes on. */
-async function runAgent(world: World, task: string): Promise<AgentResult> {
+  world.recordTranscript({ kind: 'task', text: task });
+  let streamed = 0;
+  const backfill = (calls: readonly ToolCall[]): void => {
+    for (const call of calls.slice(streamed)) {
+      world.recordTranscript({ kind: 'tool', name: call.name, args: jsonSafe(call.args), result: jsonSafe(call.result) });
+    }
+  };
   try {
-    return await world.agent.run(task, world.tools);
+    const result = await world.agent.run(task, world.tools, (event) => {
+      emit(world.observe, event);
+      if (event.type === 'tool.completed') {
+        const call = event.data.call;
+        streamed++;
+        world.recordTranscript({ kind: 'tool', name: call.name, args: jsonSafe(call.args), result: jsonSafe(call.result) });
+      }
+    });
+    backfill(result.toolCalls);
+    world.recordTranscript({ kind: 'agent', text: clip(result.finalMessage) });
+    return result;
   } catch (err) {
-    if (err instanceof AgentRunError) recordToolCalls(world, err.toolCalls);
+    if (err instanceof AgentRunError) backfill(err.toolCalls);
     throw err;
   }
 }
@@ -133,7 +136,7 @@ export async function claimGoods(
   payload: PaymentPayload,
   what: string,
 ): Promise<{ delivered: boolean; txHash?: TxHash }> {
-  world.transcript.push({ kind: 'attacker', text: `Asked the merchant for one "${item}", paying with ${what}.` });
+  world.recordTranscript({ kind: 'attacker', text: `Asked the merchant for one "${item}", paying with ${what}.` });
   const res = await postBuy(world.merchant.url, { item }, { [HEADER.signature]: encode.signature(payload) });
   const delivered = wasDelivered(res);
   const header = res.headers.get(HEADER.response);
@@ -145,7 +148,7 @@ export async function claimGoods(
     // No usable settlement report.
   }
   const message = typeof res.body.message === 'string' ? ` ${clip(res.body.message)}` : '';
-  world.transcript.push({
+  world.recordTranscript({
     kind: 'merchant',
     text: delivered
       ? `Handed over the ${item}${txHash ? ` (payment settled in ${txHash})` : ''}.`

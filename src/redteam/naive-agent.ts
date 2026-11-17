@@ -1,4 +1,6 @@
 import { formatUsdc, parseUsdc } from '../constants.js';
+import { randomUUID } from 'node:crypto';
+import { emit, type EventSink } from '../events.js';
 import type { Address, Agent, AgentResult, AgentTools, Decision, PaymentIntent, ToolCall, Usdc } from '../types.js';
 import { largestTransfers } from './activity-summary.js';
 import { postBuy, wasDelivered, type BuyResponse } from './merchant-client.js';
@@ -57,7 +59,7 @@ export class NaiveAgent implements Agent {
     this.maxPayments = opts.maxPayments ?? DEFAULT_MAX_PAYMENTS;
   }
 
-  async run(task: string, tools: AgentTools): Promise<AgentResult> {
+  async run(task: string, tools: AgentTools, onEvent?: EventSink): Promise<AgentResult> {
     const item = ITEM_PATTERN.exec(task)?.[1];
     const merchantUrl = URL_PATTERN.exec(task)?.[0]?.replace(/\.$/, '');
     const subject = SUBJECT_PATTERN.exec(task)?.[1]?.toLowerCase();
@@ -66,43 +68,48 @@ export class NaiveAgent implements Agent {
     const calls: ToolCall[] = [];
     // Calls are recorded in the shape the LLM tools use (amounts as decimal USDC), so a
     // replay reads the same whichever agent ran.
-    const record = (name: string, args: unknown, result: unknown): void => {
-      calls.push({ name, args, result });
+    const observe = async <T>(name: string, args: unknown, action: () => Promise<T>, present: (result: T) => unknown): Promise<T> => {
+      const callId = randomUUID();
+      emit(onEvent, { type: 'tool.started', data: { callId, name, args } });
+      try {
+        const result = await action();
+        const call = { name, args, result: present(result) };
+        calls.push(call);
+        emit(onEvent, { type: 'tool.completed', data: { callId, call } });
+        return result;
+      } catch (err) {
+        emit(onEvent, { type: 'tool.failed', data: { callId, name, error: err instanceof Error ? err.message : String(err) } });
+        throw err;
+      }
     };
     const done = (finalMessage: string): AgentResult => ({ finalMessage, toolCalls: [...calls] });
 
     const order = subject ? { subject } : undefined;
     const quote = async (): Promise<PaymentIntent | string> => {
       try {
-        const quoted = await tools.getQuote(merchantUrl, item, order);
-        record(
+        return await observe(
           'get_quote',
           { merchant_url: merchantUrl, item, ...(order ? { order } : {}) },
-          { intent_id: quoted.id, item: quoted.item, price_usdc: formatUsdc(quoted.amount), description: quoted.description },
+          () => tools.getQuote(merchantUrl, item, order),
+          (quoted) => ({ intent_id: quoted.id, item: quoted.item, price_usdc: formatUsdc(quoted.amount), description: quoted.description }),
         );
-        return quoted;
       } catch (err) {
         return `Could not get a quote: ${err instanceof Error ? err.message : String(err)}`;
       }
     };
     const pay = async (intentId: string, payTo: Address, amount: Usdc, reason: string): Promise<Decision> => {
-      const decision = await tools.requestPayment({ intentId, payTo, amount, reason });
-      record(
+      return observe(
         'request_payment',
         { intent_id: intentId, pay_to: payTo, amount_usdc: formatUsdc(amount), reason },
-        {
-          allowed: decision.allowed,
-          reason: decision.reason,
-          tx_hash: decision.txHash,
+        () => tools.requestPayment({ intentId, payTo, amount, reason }),
+        (decision) => ({
+          allowed: decision.allowed, reason: decision.reason, tx_hash: decision.txHash,
           ...(decision.merchantResponse ? { merchant_response: decision.merchantResponse } : {}),
-        },
+        }),
       );
-      return decision;
     };
     const balance = async (): Promise<Usdc> => {
-      const held = await tools.checkBalance();
-      record('check_balance', {}, { balance_usdc: formatUsdc(held) });
-      return held;
+      return observe('check_balance', {}, () => tools.checkBalance(), (held) => ({ balance_usdc: formatUsdc(held) }));
     };
 
     const intent = await quote();
@@ -110,9 +117,7 @@ export class NaiveAgent implements Agent {
     /** Places the order without paying, to read what the merchant asks. */
     const askMerchant = async (): Promise<BuyResponse> => {
       const body = { item, ...(subject ? { subject } : {}) };
-      const response = await postBuy(merchantUrl, body);
-      record('merchant_request', { merchant_url: merchantUrl, method: 'POST', path: '/buy', body }, response);
-      return response;
+      return observe('merchant_request', { merchant_url: merchantUrl, method: 'POST', path: '/buy', body }, () => postBuy(merchantUrl, body), (response) => ({ status: response.status, body: response.body }));
     };
 
     const planted = findPlantedInstruction(intent.description);

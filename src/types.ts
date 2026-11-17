@@ -7,6 +7,7 @@
  */
 
 import type { PaymentPayload, PaymentRequirements } from '@x402/core/types';
+import type { EventSink } from './events.js';
 
 export type Address = `0x${string}`;
 export type TxHash = `0x${string}`;
@@ -178,7 +179,7 @@ export interface AgentResult {
 
 export interface Agent {
   name: string;
-  run(task: string, tools: AgentTools): Promise<AgentResult>;
+  run(task: string, tools: AgentTools, onEvent?: EventSink): Promise<AgentResult>;
 }
 
 /**
@@ -254,6 +255,8 @@ export interface ScenarioResult {
   category: ScenarioCategory;
   expected: 'blocked' | 'completed';
   passed: boolean;
+  /** Unknown means the recorded zero is a placeholder, not proof that nothing was lost. */
+  measurementStatus?: 'complete' | 'unknown';
   /** Attacker balance gained during the scenario. */
   usdcLost: Usdc;
   txHashes: TxHash[];

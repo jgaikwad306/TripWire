@@ -28,12 +28,16 @@ const status = (r: ScenarioResult): string => (r.passed ? 'PASS' : 'FAIL');
 const guardLabel = (report: Report): string => (report.guarded ? 'ON' : 'OFF (baseline)');
 
 const attacksOf = (report: Report): ScenarioResult[] => report.results.filter((r) => r.category !== 'honest');
+const unknownLoss = (report: Report): boolean => report.results.some((r) => r.measurementStatus === 'unknown');
+const scoreText = (report: Report): string => unknownLoss(report) ? 'unknown — score withheld' : `${report.overall} / 100`;
+const lossText = (report: Report): string => formatUsdc(report.usdcLost) + (unknownLoss(report) ? ' measured + unknown' : '');
 const attacksStopped = (report: Report): string =>
   `${attacksOf(report).filter((r) => r.passed).length} / ${attacksOf(report).length}`;
 const honestCompleted = (report: Report): string => `${report.honestCompleted} / ${report.honestTotal}`;
 
 /** One line saying what happened in a scenario, e.g. "blocked by allowlist" or "lost 0.5 USDC". */
 export function describeResult(r: ScenarioResult): string {
+  if (r.measurementStatus === 'unknown') return `loss unknown: ${r.error ?? 'outcome could not be measured'}`;
   // A scenario can lose money and then throw; the loss must stay visible.
   if (r.usdcLost > 0n) return `lost ${formatUsdc(r.usdcLost)} USDC${r.error ? ` (also failed: ${r.error})` : ''}`;
   if (r.error) return `error: ${r.error}`;
@@ -45,14 +49,14 @@ export function describeResult(r: ScenarioResult): string {
 }
 
 /** Plain-text scorecard for the terminal. */
-export function renderTerminal({ network, report }: SavedReport): string {
+export function renderTerminal({ network, report, partial }: SavedReport): string {
   const row = (label: string, value: string): string => `  ${label.padEnd(LABEL_WIDTH)}${value}`;
   return [
     TITLE,
     `Agent ${report.agentName} | guard ${guardLabel(report)} | ${NETWORK_LABEL[network]} | ${report.startedAt}`,
     '',
-    row('Score', `${report.overall} / 100`),
-    row('USDC lost', formatUsdc(report.usdcLost)),
+    row('Score', partial ? 'partial run — score withheld' : scoreText(report)),
+    row('USDC lost', lossText(report)),
     row('Attacks stopped', attacksStopped(report)),
     row('Honest purchases', `${honestCompleted(report)} completed`),
     '',
@@ -72,8 +76,8 @@ export function renderComparison(guarded: Report, baseline: Report): string {
   return [
     'Guard on vs guard off',
     row('', 'guard ON', 'guard OFF'),
-    row('Score', `${guarded.overall} / 100`, `${baseline.overall} / 100`),
-    row('USDC lost', formatUsdc(guarded.usdcLost), formatUsdc(baseline.usdcLost)),
+    row('Score', scoreText(guarded), scoreText(baseline)),
+    row('USDC lost', lossText(guarded), lossText(baseline)),
     row('Attacks stopped', attacksStopped(guarded), attacksStopped(baseline)),
     row('Honest purchases', honestCompleted(guarded), honestCompleted(baseline)),
   ].join('\n');
@@ -103,7 +107,7 @@ function renderDetails(network: Network, r: ScenarioResult): string[] {
   ];
 }
 
-export function renderMarkdown({ network, report }: SavedReport): string {
+export function renderMarkdown({ network, report, partial }: SavedReport): string {
   return [
     `# ${TITLE}`,
     '',
@@ -114,9 +118,9 @@ export function renderMarkdown({ network, report }: SavedReport): string {
     `| Network | ${NETWORK_LABEL[network]} |`,
     `| Started | ${report.startedAt} |`,
     '',
-    `## Score: ${report.overall} / 100`,
+    partial ? '## Partial run — score withheld' : `## Score: ${scoreText(report)}`,
     '',
-    `- USDC lost: ${formatUsdc(report.usdcLost)}`,
+    `- USDC lost: ${lossText(report)}`,
     `- Attacks stopped: ${attacksStopped(report)}`,
     `- Honest purchases completed: ${honestCompleted(report)}`,
     '',
@@ -135,7 +139,7 @@ export function renderMarkdown({ network, report }: SavedReport): string {
     '|---|---|---|---|---|---|',
     ...report.results.map(
       (r) =>
-        `| ${cell(r.title)} | ${r.category} | ${r.expected} | ${status(r)} | ${formatUsdc(r.usdcLost)} | ${cell(describeResult(r))} |`,
+        `| ${cell(r.title)} | ${r.category} | ${r.expected} | ${status(r)} | ${r.measurementStatus === 'unknown' ? 'Unknown' : formatUsdc(r.usdcLost)} | ${cell(describeResult(r))} |`,
     ),
     '',
     '## Details',

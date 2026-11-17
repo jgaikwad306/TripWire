@@ -57,6 +57,7 @@ export interface MerchantOptions {
    * Default: accept anything without settling (only for tests of the HTTP surface).
    */
   acceptPayment?: (req: IncomingPayment) => Promise<Decision>;
+  onDelivery?: (delivery: { orderId: string; item: string; txHash?: TxHash }) => void;
   /** Items that return data instead of a placeholder. Each needs a `subject` address in the order. */
   resources?: Record<string, PaidResource>;
 }
@@ -271,6 +272,7 @@ export async function startMerchant(opts: MerchantOptions): Promise<MockMerchant
       }
       if (proofKey) owed.delete(proofKey);
       delivered.push({ orderId, item, ...(settledTx ? { txHash: settledTx } : {}), ...(resource ? { content } : {}) });
+      try { opts.onDelivery?.({ orderId, item, ...(settledTx ? { txHash: settledTx } : {}) }); } catch { /* Observers cannot prevent delivery. */ }
       return send(res, 200, { delivered: true, orderId, item, content }, settlement);
     }
 

@@ -1,15 +1,17 @@
 import { ExplorerActivityReader, buildActivityReport, type ActivityReader } from '../chain/activity.js';
 import { createArcClient } from '../chain/arc.js';
+import { randomUUID } from 'node:crypto';
+import { emit, type EventSink, type ReceiptObservation } from '../events.js';
 import { httpQuoteFetcher } from '../merchant/quote.js';
 import { startMerchant, type MockMerchant } from '../merchant/server.js';
 import { guardedTools } from '../agent/tools.js';
-import { parseUsdc } from '../constants.js';
+import { parseUsdc, USDC_ADDRESS } from '../constants.js';
 import { AllowAllGuard, FAKE_TOKEN_ADDRESS, FakeLedger } from '../fakes/index.js';
 import { arcFacilitatorSigner } from '../x402/arc-signer.js';
 import { CircleFacilitator } from '../x402/circle.js';
 import { LocalFacilitator, type Facilitator } from '../x402/facilitator.js';
 import { FallbackFacilitator } from '../x402/fallback.js';
-import { HEADER } from '../x402/protocol.js';
+import { HEADER, eip3009Of } from '../x402/protocol.js';
 import { ApprovalDesk } from '../guard/approvals.js';
 import { sameAddress } from '../guard/checks.js';
 import { createGuard, defaultPolicy, type GuardStore, type Policy } from '../guard/index.js';
@@ -88,6 +90,8 @@ export interface World extends ScenarioContext {
   ownerUrl?: string;
   /** Steps recorded as the scenario runs. Kept here so it survives a scenario that throws. */
   transcript: TranscriptEntry[];
+  recordTranscript(entry: TranscriptEntry): void;
+  observe?: EventSink;
   /**
    * How many payment requests named a payee or amount other than the quote they pointed
    * at. Shows whether an attack reached the guard even when the guard denied nothing.
@@ -128,7 +132,7 @@ export interface WorldOverrides {
   policy?: (prices: Prices) => Partial<Policy>;
 }
 
-export type WorldFactory = (overrides?: WorldOverrides) => Promise<World>;
+export type WorldFactory = (overrides?: WorldOverrides, onEvent?: EventSink) => Promise<World>;
 
 interface WorldBase {
   network: Network;
@@ -178,8 +182,54 @@ export function runPolicy(wallet: WalletProvider, prices: Prices, overrides: Par
   });
 }
 
-async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: WorldOverrides = {}): Promise<World> {
-  const { wallet, chain, prices } = base;
+async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: WorldOverrides = {}, onEvent?: EventSink): Promise<World> {
+  const { chain, prices } = base;
+  const wallet: WalletProvider = onEvent ? {
+    addressOf: (role) => base.wallet.addressOf(role),
+    getBalance: (role) => base.wallet.getBalance(role),
+    signTypedData: async (role, data) => {
+      emit(onEvent, { type: 'signature.started', data: { role } });
+      const signature = await base.wallet.signTypedData(role, data);
+      emit(onEvent, { type: 'signature.completed', data: { role } });
+      return signature;
+    },
+    transfer: async (args) => {
+      const data = { operationId: randomUUID(), from: args.from, to: args.to, amount: args.amount, asset: 'USDC' as const };
+      emit(onEvent, { type: 'transfer.started', data });
+      try {
+        const sent = await base.wallet.transfer(args);
+        emit(onEvent, { type: 'transfer.confirmed', data: { ...data, txHash: sent.txHash } });
+        return sent;
+      } catch (err) {
+        emit(onEvent, { type: 'transfer.failed', data: { ...data, error: err instanceof Error ? err.message : String(err) } });
+        throw err;
+      }
+    },
+  } : base.wallet;
+  const facilitator: Facilitator = onEvent ? {
+    name: base.facilitator.name,
+    verify: (payload, requirements) => base.facilitator.verify(payload, requirements),
+    settle: async (payload, requirements) => {
+      const auth = eip3009Of(payload)?.authorization;
+      const data = {
+        operationId: randomUUID(), from: auth?.from ?? 'unknown', to: auth?.to ?? requirements.payTo,
+        amount: auth?.value ?? requirements.amount,
+        asset: (payload.accepted?.asset ?? requirements.asset).toLowerCase() === USDC_ADDRESS.toLowerCase() ? 'USDC' as const : 'counterfeit' as const,
+      };
+      emit(onEvent, { type: 'settlement.started', data });
+      try {
+        const result = await base.facilitator.settle(payload, requirements);
+        emit(onEvent, { type: result.success ? 'settlement.completed' : 'settlement.failed', data: {
+          ...data, ...(/^0x[0-9a-fA-F]{64}$/.test(result.transaction) ? { txHash: result.transaction as TxHash } : {}),
+          ...(!result.success ? { error: result.errorReason ?? 'Settlement refused.' } : {}),
+        } });
+        return result;
+      } catch (err) {
+        emit(onEvent, { type: 'settlement.failed', data: { ...data, error: err instanceof Error ? err.message : String(err) } });
+        throw err;
+      }
+    },
+  } : base.facilitator;
   const approvals = opts.approval?.desk ?? new ApprovalDesk();
   const approvalThreshold = opts.approval?.threshold ?? overrides.approvalThreshold?.(prices);
   // A new guard per scenario: spend history and loop counts must not carry over.
@@ -208,7 +258,7 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
     ...(store ? { store } : {}),
     chain,
     fetchQuote: httpQuoteFetcher,
-    facilitator: base.facilitator,
+    facilitator,
     fetchImpl: guardFetch,
     settleWaitMs: base.settleMs,
   });
@@ -222,10 +272,10 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
         approvals,
         approvalWaitMs: opts.approval?.waitMs ?? 0,
       })
-    : new AllowAllGuard(wallet, httpQuoteFetcher, { facilitator: base.facilitator, chain, settleWaitMs: base.settleMs });
-  const { guard, offQuoteRequests } = watchRequests(unwatchedGuard);
+    : new AllowAllGuard(wallet, httpQuoteFetcher, { facilitator, chain, settleWaitMs: base.settleMs });
+  const { guard, offQuoteRequests } = watchRequests(unwatchedGuard, onEvent);
   const merchantGuard =
-    opts.guarded && opts.guardStore ? createGuard({ ...guardDeps(), policy: runPolicy(wallet, prices) }) : undefined;
+    opts.guarded && opts.guardStore ? watchRequests(createGuard({ ...guardDeps(), policy: runPolicy(wallet, prices) }), onEvent).guard : undefined;
   // A scenario that turns approvals on gets the owner's page too, as a real owner would
   // have it running. A caller that passes its own desk runs its own page.
   const ownerConsole =
@@ -245,16 +295,30 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
     // With a state file, the guard is the buyer's and keeps the buyer's state; the merchant,
     // another business, checks payments with a guard of its own.
     acceptPayment: (req) => (merchantGuard ?? guard).acceptPayment(req),
+    onDelivery: (delivery) => emit(onEvent, { type: 'delivery', data: delivery }),
   });
+  const transcript: TranscriptEntry[] = [];
+  if (onEvent) {
+    await Promise.all([wallet.getBalance('hot'), wallet.getBalance('vault')]).then(([hot, vault]) => {
+      emit(onEvent, { type: 'world.ready', data: { merchant: wallet.addressOf('merchant'), attacker, hot, vault, hotCap: runPolicy(wallet, prices).hotBalanceCap } });
+    }).catch(() => undefined);
+  }
   return {
     ...base,
+    facilitator,
+    wallet,
     guard,
     agent: opts.agent,
     tools: guardedTools(guard),
     merchant,
     attacker,
     activitySubject: opts.activitySubject ?? base.activitySubject,
-    transcript: [],
+    transcript,
+    observe: onEvent,
+    recordTranscript: (entry) => {
+      transcript.push(entry);
+      emit(onEvent, { type: 'transcript', data: { entry } });
+    },
     offQuoteRequests,
     approvals,
     // The page's address without its token: that is all an attacker could find out.
@@ -266,23 +330,39 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
 }
 
 /** Wraps a guard to count payment requests that differ from the quote they name. */
-function watchRequests(inner: Guard): { guard: Guard; offQuoteRequests: () => number } {
+function watchRequests(inner: Guard, onEvent?: EventSink): { guard: Guard; offQuoteRequests: () => number } {
   const quotes = new Map<string, PaymentIntent>();
   let offQuote = 0;
   const guard: Guard = {
     getQuote: async (merchantUrl, item, order) => {
       const intent = await inner.getQuote(merchantUrl, item, order);
       quotes.set(intent.id, intent);
+      emit(onEvent, { type: 'quote.recorded', data: { intent } });
       return intent;
     },
-    requestPayment: (req) => {
+    requestPayment: async (req) => {
       const quote = quotes.get(req.intentId);
       const matches =
         quote !== undefined && typeof req.payTo === 'string' && sameAddress(req.payTo, quote.payTo) && req.amount === quote.amount;
       if (!matches) offQuote++;
-      return inner.requestPayment(req);
+      const operationId = randomUUID();
+      emit(onEvent, { type: 'operation.started', data: { operationId, side: 'send', request: req } });
+      const decision = await inner.requestPayment(req);
+      emit(onEvent, { type: 'guard.decision', data: { operationId, side: 'send', request: req, decision } });
+      return decision;
     },
-    acceptPayment: (req) => inner.acceptPayment(req),
+    acceptPayment: async (req) => {
+      const operationId = randomUUID();
+      const auth = eip3009Of(req.payload)?.authorization;
+      const request: ReceiptObservation = {
+        orderId: req.orderId, expectedTo: req.requirements.payTo, expectedAmount: req.requirements.amount,
+        ...(auth ? { payment: { from: auth.from, to: auth.to, value: auth.value, nonce: auth.nonce, asset: req.payload.accepted?.asset ?? 'unknown' } } : {}),
+      };
+      emit(onEvent, { type: 'operation.started', data: { operationId, side: 'receive', request } });
+      const decision = await inner.acceptPayment(req);
+      emit(onEvent, { type: 'guard.decision', data: { operationId, side: 'receive', request, decision } });
+      return decision;
+    },
     rebalance: () => inner.rebalance(),
     hotBalance: () => inner.hotBalance(),
     decisions: () => inner.decisions(),
@@ -292,7 +372,7 @@ function watchRequests(inner: Guard): { guard: Guard; offQuoteRequests: () => nu
 
 /** Offline world: in-memory ledger, real HTTP merchant on localhost. No keys, no network. */
 export function fakeWorldFactory(opts: WorldOptions): WorldFactory {
-  return async (overrides) => {
+  return async (overrides, onEvent) => {
     const ledger = new FakeLedger({ vault: FAKE_VAULT_BALANCE, hot: FAKE_HOT_BALANCE });
     seedActivity(ledger);
     return assembleWorld(
@@ -310,6 +390,7 @@ export function fakeWorldFactory(opts: WorldOptions): WorldFactory {
       },
       opts,
       overrides,
+      onEvent,
     );
   };
 }
@@ -350,7 +431,7 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
   // One for the whole run, so a switch away from Circle's trial sticks.
   let facilitator: Facilitator | undefined;
 
-  return async (overrides) => {
+  return async (overrides, onEvent) => {
     const lane = await walletLane();
     live ??= lane.createLiveWallet();
     const { wallet, chain } = await live;
@@ -369,6 +450,7 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
       },
       opts,
       overrides,
+      onEvent,
     );
   };
 }

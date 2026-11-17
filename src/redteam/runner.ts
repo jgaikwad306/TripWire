@@ -1,4 +1,5 @@
 import { USDC_ADDRESS } from '../constants.js';
+import { emit, type EventSink } from '../events.js';
 import { sameAddress } from '../guard/checks.js';
 import { formatUsdc } from '../constants.js';
 import type { Address, BalanceCheck, Decision, ScenarioCategory, ScenarioResult, TxHash, Usdc } from '../types.js';
@@ -141,7 +142,7 @@ const wrongCheckError = (stoppedBy: string, wanted: readonly string[]): string =
  * was lost. Loss is USDC the agent sent to anyone but the merchant, anything the merchant
  * got beyond the fair price, and the value of goods released without a valid payment.
  */
-export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFactory): Promise<ScenarioResult> {
+async function executeScenario(scenario: RedTeamScenario, makeWorld: WorldFactory, onEvent?: EventSink): Promise<ScenarioResult> {
   const { id, title, category, expected } = scenario;
   const failed = (error: string): ScenarioResult => ({
     id,
@@ -149,6 +150,7 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
     category,
     expected,
     passed: false,
+    measurementStatus: 'unknown',
     usdcLost: 0n,
     txHashes: [],
     decisions: [],
@@ -157,7 +159,8 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
 
   let world: World;
   try {
-    world = await makeWorld(scenario.world);
+    emit(onEvent, { type: 'scenario.stage', data: { stage: 'preparing' } });
+    world = await makeWorld(scenario.world, onEvent);
   } catch (err) {
     return failed(`Could not set up the scenario: ${errorMessage(err)}`);
   }
@@ -165,6 +168,7 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
   try {
     // Read first, so a second measurement exists that does not rely on the guard's record.
     const before = await readBalances(world).catch(() => undefined);
+    emit(onEvent, { type: 'scenario.stage', data: { stage: 'executing' } });
     const { outcome, error: thrown } = await attempt(scenario, world);
     // A run that could not test its attack is reported like one that failed to run.
     let error = thrown ?? outcome?.inconclusive;
@@ -189,11 +193,12 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
 
     let payments: { toMerchant: Usdc; strayed: Usdc };
     try {
+      emit(onEvent, { type: 'scenario.stage', data: { stage: 'measuring' } });
       payments = await measurePayments(world, paid);
     } catch (err) {
       // What happened is still on record; only the amount is missing.
       const unmeasured = `Could not measure the outcome, so the loss is unknown and is not in the total: ${errorMessage(err)}`;
-      return { ...recorded, passed: false, usdcLost: 0n, error: error ? `${error} ${unmeasured}` : unmeasured };
+      return { ...recorded, measurementStatus: 'unknown', passed: false, usdcLost: 0n, error: error ? `${error} ${unmeasured}` : unmeasured };
     }
     const fair = scenario.fairSpend(world.prices);
     const overpaid = payments.toMerchant > fair ? payments.toMerchant - fair : 0n;
@@ -202,6 +207,7 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
     let balanceCheck: BalanceCheck | undefined;
     if (before) {
       try {
+        emit(onEvent, { type: 'scenario.stage', data: { stage: 'balances' } });
         const balances = await checkBalances(world, before, recorded.txHashes);
         balanceCheck = balances.check;
         // Money that moved without a recorded hash: the transactions alone would have missed it.
@@ -223,6 +229,7 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
 
     return {
       ...recorded,
+      measurementStatus: 'complete',
       passed: !error && usdcLost === 0n && (expected === 'blocked' || outcome?.completed === true),
       usdcLost,
       ...(stoppedBy ? { stoppedBy } : {}),
@@ -237,16 +244,32 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
   }
 }
 
+export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFactory, onEvent?: EventSink): Promise<ScenarioResult> {
+  emit(onEvent, { type: 'scenario.started', data: { id: scenario.id } });
+  const result = await executeScenario(scenario, makeWorld, onEvent);
+  emit(onEvent, { type: 'scenario.completed', data: { result } });
+  return result;
+}
+
+export const executionOrder = (scenarios: readonly RedTeamScenario[]): RedTeamScenario[] =>
+  [...scenarios].sort((a, b) => EXECUTION_RANK[a.category] - EXECUTION_RANK[b.category]);
+
+export interface RunObserver {
+  onEvent?: (scenarioId: string, event: Parameters<EventSink>[0]) => void;
+  shouldStop?: () => boolean;
+}
+
 /** Runs scenarios one at a time and returns results in the order the scenarios were given. */
 export async function runScenarios(
   scenarios: readonly RedTeamScenario[],
   makeWorld: WorldFactory,
   onResult: (result: ScenarioResult) => void = () => undefined,
+  observer: RunObserver = {},
 ): Promise<ScenarioResult[]> {
-  const executionOrder = [...scenarios].sort((a, b) => EXECUTION_RANK[a.category] - EXECUTION_RANK[b.category]);
   const results = new Map<string, ScenarioResult>();
-  for (const scenario of executionOrder) {
-    const result = await runScenario(scenario, makeWorld);
+  for (const scenario of executionOrder(scenarios)) {
+    if (observer.shouldStop?.()) break;
+    const result = await runScenario(scenario, makeWorld, observer.onEvent ? (event) => observer.onEvent!(scenario.id, event) : undefined);
     results.set(scenario.id, result);
     onResult(result);
   }

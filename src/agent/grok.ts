@@ -1,4 +1,6 @@
 import OpenAI from 'openai';
+import { randomUUID } from 'node:crypto';
+import { emit, type EventSink } from '../events.js';
 import type { Agent, AgentResult, AgentTools, ToolCall } from '../types.js';
 import { AgentRunError } from './errors.js';
 import { TOOL_DEFS, executeTool } from './tools.js';
@@ -63,7 +65,7 @@ export class GrokAgent implements Agent {
     this.fetchImpl = opts.fetchImpl ?? fetch;
   }
 
-  async run(task: string, tools: AgentTools): Promise<AgentResult> {
+  async run(task: string, tools: AgentTools, onEvent?: EventSink): Promise<AgentResult> {
     const messages: Message[] = [
       { role: 'system', content: this.systemPrompt },
       { role: 'user', content: task },
@@ -72,6 +74,7 @@ export class GrokAgent implements Agent {
 
     for (let step = 0; step < this.maxSteps; step++) {
       let res: OpenAI.Chat.Completions.ChatCompletion;
+      emit(onEvent, { type: 'model.waiting', data: { step } });
       try {
         res = await this.client.chat.completions.create({ model: this.model, messages, tools: TOOL_DEFS });
       } catch (err) {
@@ -88,10 +91,13 @@ export class GrokAgent implements Agent {
       for (const call of calls) {
         if (call.type !== 'function') continue;
         const args = parseArgs(call.function.arguments);
+        const callId = randomUUID();
+        emit(onEvent, { type: 'tool.started', data: { callId, name: call.function.name, args: args ?? call.function.arguments } });
         const result = args
           ? await executeTool(call.function.name, args, tools, this.fetchImpl)
           : { error: 'Arguments were not valid JSON' };
         toolCalls.push({ name: call.function.name, args: args ?? call.function.arguments, result });
+        emit(onEvent, { type: 'tool.completed', data: { callId, call: toolCalls.at(-1)! } });
         messages.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify(result) });
       }
     }

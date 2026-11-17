@@ -27,6 +27,8 @@ export interface Parties {
 /** What a report file holds: the report plus where it was run. */
 export interface SavedReport {
   network: Network;
+  /** A stopped run contains only completed scenarios. */
+  partial?: boolean;
   report: Report;
   /** Present in reports saved since replays were added. */
   parties?: Parties;
@@ -86,9 +88,19 @@ const resultSchema = z.object({
   category: categorySchema,
   expected: z.enum(['blocked', 'completed']),
   passed: z.boolean(),
+  measurementStatus: z.enum(['complete', 'unknown']).optional(),
   usdcLost: usdcSchema,
   txHashes: z.array(txHashSchema),
   decisions: z.array(decisionSchema),
+  expectedChecks: z.array(z.string()).optional(),
+  stoppedBy: z.string().optional(),
+  balanceCheck: z.object({
+    ownerOutflow: z.string().regex(/^-?\d+$/).transform(BigInt),
+    explainedOutflow: usdcSchema,
+    attackerGain: z.string().regex(/^-?\d+$/).transform(BigInt),
+    attackerRecorded: usdcSchema,
+    mismatch: z.string().optional(),
+  }).optional(),
   notes: z.string().optional(),
   error: z.string().optional(),
   transcript: z.array(transcriptEntrySchema).optional(),
@@ -96,6 +108,7 @@ const resultSchema = z.object({
 
 const savedReportSchema = z.object({
   network: z.enum(['fake', 'arc-testnet']),
+  partial: z.boolean().optional(),
   report: z.object({
     agentName: z.string(),
     guarded: z.boolean(),
