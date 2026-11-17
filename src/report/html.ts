@@ -5,9 +5,10 @@ import type { Report, ScenarioCategory, ScenarioResult, TxHash } from '../types.
 import type { HoldSnapshot, SavedReport } from './store.js';
 
 /**
- * One self-contained HTML page for a run: no scripts, no build step, safe to open from
- * disk or attach to a submission. Given a baseline it shows the guarded run beside the
- * unguarded one, which is the comparison the project exists to make.
+ * One self-contained HTML file for a run, laid out as a small site with tabs: no build
+ * step, no external scripts, safe to open from disk or attach to a submission. Given a
+ * baseline it shows the guarded run beside the unguarded one, which is the comparison
+ * the project exists to make.
  *
  * Everything from a report is escaped. Agent notes and guard reasons can contain text
  * an attacker planted on purpose, so none of it may reach the page as markup.
@@ -243,10 +244,31 @@ const CSS = `
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--paper);color:var(--ink);font-family:"Schibsted Grotesk",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:1rem;line-height:1.5}
-main{max-width:60rem;margin:0 auto;padding:3rem 1.25rem 4rem}
+main{max-width:60rem;margin:0 auto;padding:2.5rem 1.25rem 3rem}
 h1,h2,h3,h4,p{margin:0}
-.kicker{color:var(--muted);font-size:.9375rem}
-h1{font-size:clamp(1.75rem,1.1rem + 2.6vw,2.75rem);line-height:1.15;font-weight:700;letter-spacing:-.015em;max-width:30ch;margin-top:.5rem;text-wrap:balance}
+.site-head{position:sticky;top:0;z-index:1;background:var(--surface);border-bottom:1px solid var(--line)}
+.site-head-inner{max-width:60rem;margin:0 auto;padding:0 1.25rem;display:flex;align-items:stretch;gap:2rem}
+.brand{display:flex;align-items:center;gap:.5rem;padding:1rem 0;font-weight:700;color:var(--ink);text-decoration:none;white-space:nowrap}
+.brand::before{content:"";width:.75rem;height:.75rem;border-radius:.1875rem;background:var(--stop)}
+.tabs{display:flex;gap:.25rem;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs a{display:flex;align-items:center;padding:0 .75rem;color:var(--muted);text-decoration:none;white-space:nowrap;border-bottom:.1875rem solid transparent;border-top:.1875rem solid transparent}
+.tabs a:hover{color:var(--ink)}
+.tabs a[aria-selected="true"]{color:var(--ink);font-weight:600;border-bottom-color:var(--ink)}
+.tabs a:focus-visible,.brand:focus-visible{outline:.1875rem solid var(--ink);outline-offset:-.1875rem}
+.tab:focus{outline:none}
+.tab[hidden]{display:none}
+.tab+.tab{margin-top:3rem}
+.tabbed .tab+.tab{margin-top:0}
+.tab>.block:first-child{margin-top:0}
+.staged{margin-top:2rem;color:var(--muted);font-size:.9375rem;max-width:68ch}
+.pillars{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:1rem}
+.pillars section,.prose{background:var(--surface);border-radius:.75rem;padding:1.5rem}
+.pillars h3{font-size:1.125rem;font-weight:700;margin-bottom:.375rem}
+.prose p+p{margin-top:.75rem}
+.prose{max-width:none}
+.site-foot{max-width:60rem;margin:0 auto;padding:0 1.25rem 3rem;color:var(--muted);font-size:.875rem}
+h1{font-size:clamp(1.75rem,1.1rem + 2.6vw,2.75rem);line-height:1.15;font-weight:700;letter-spacing:-.015em;max-width:30ch;text-wrap:balance}
 .context{color:var(--muted);max-width:62ch;margin-top:1rem}
 .panels{display:grid;grid-template-columns:repeat(auto-fit,minmax(16rem,1fr));gap:1rem;margin-top:2.5rem}
 .panel{background:var(--surface);border-radius:.75rem;padding:1.5rem;border-top:.375rem solid var(--stop)}
@@ -302,9 +324,11 @@ summary:focus-visible,a:focus-visible{outline:.1875rem solid var(--ink);outline-
 .txs,.said,.quiet{margin-top:.5rem;font-size:.9375rem}
 .said,.quiet{color:var(--muted)}
 .tx{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.875rem;color:var(--ink);overflow-wrap:anywhere;margin-right:.75rem}
-footer{margin-top:3rem;color:var(--muted);font-size:.9375rem;max-width:68ch}
-footer p+p{margin-top:.5rem}
 @media (max-width:40rem){
+  .site-head-inner{flex-direction:column;gap:0}
+  .brand{padding:.75rem 0 .25rem}
+  .tabs{margin:0 -1.25rem;padding:0 .5rem}
+  .tabs a{padding:.5rem .75rem}
   .ledger thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
   .ledger tr{display:block;padding:.75rem 0}
   .ledger tbody tr+tr{border-top:1px solid var(--line)}
@@ -313,7 +337,7 @@ footer p+p{margin-top:.5rem}
   .ledger td::before{content:attr(data-label);display:block;color:var(--muted);font-size:.8125rem}
   .cell-loss{margin:.25rem .5rem;border-radius:.375rem;padding:.5rem !important}
 }
-@media print{body{background:#fff}details{break-inside:avoid}}
+@media print{body{background:#fff}details{break-inside:avoid}.site-head{position:static}.tabs{display:none}.tab[hidden]{display:block}.tab+.tab{margin-top:3rem}}
 `;
 
 /**
@@ -328,6 +352,66 @@ export function renderHtml(primary: SavedReport, baseline?: SavedReport): string
   const honest = report.results.length - attacks;
   const context = `${report.agentName} faced ${plural(attacks, 'attack')}${honest ? ` and made ${plural(honest, 'honest purchase')}` : ''}, ${where}${base ? ', once with the guard and once without' : ''}. ${whenText(report.startedAt)}.`;
 
+  const staged =
+    primary.network === 'arc-testnet'
+      ? 'These attacks were staged: the malicious merchant and the attacker address belong to the team, and the funds are testnet USDC with no value.'
+      : 'This run was simulated offline. No chain was used and no funds moved.';
+
+  // Each tab is one question a reader has. Tabs with nothing to show are left out.
+  const tabs: Tab[] = [
+    {
+      id: 'overview',
+      label: 'Overview',
+      body: `<header>
+      <h1>${esc(headline(report, base))}</h1>
+      <p class="context">${esc(context)}</p>
+    </header>
+    <div class="panels">
+      ${scorePanel(report, report.guarded ? 'With the guard' : 'Without the guard')}
+      ${base ? scorePanel(base, 'Without the guard') : ''}
+    </div>
+    <section class="block">
+      <h2>Score by area</h2>
+      <p>Each area is scored out of 100 from the scenarios that test it.</p>
+      ${categoryTable(report, base)}
+    </section>
+    <p class="staged">${esc(staged)}</p>`,
+    },
+    {
+      id: 'attacks',
+      label: 'Attacks',
+      body: `<section class="block">
+      <h2>What each attack did</h2>
+      <p>Each row is one attempt to make the agent pay the wrong party, pay too much, pay twice, or hand over goods without being paid.</p>
+      ${scenarioTable(report, base, false)}
+    </section>`,
+    },
+    ...(honest
+      ? [
+          {
+            id: 'purchases',
+            label: 'Honest purchases',
+            body: `<section class="block">
+      <h2>Honest purchases</h2>
+      <p>Ordinary purchases have to keep working. A guard that blocks everything is not safe, it is broken.</p>
+      ${scenarioTable(report, base, true)}
+    </section>`,
+          },
+        ]
+      : []),
+    ...(primary.hold ? [{ id: 'wallet', label: 'Wallet', body: holdSection(primary.hold, Boolean(base)) }] : []),
+    {
+      id: 'evidence',
+      label: 'Evidence',
+      body: `<section class="block">
+      <h2>Evidence</h2>
+      <p>Open a scenario to see what the guard decided${primary.network === 'arc-testnet' ? ' and the transactions on the Arc Testnet explorer' : ''}.</p>
+      ${evidence(primary, baseline)}
+    </section>`,
+    },
+    { id: 'how', label: 'How it works', body: howItWorks(staged) },
+  ];
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -339,57 +423,101 @@ export function renderHtml(primary: SavedReport, baseline?: SavedReport): string
 <style>${CSS}</style>
 </head>
 <body>
-<main>
-  <header>
-    <p class="kicker">Agent Wallet Guard red-team report</p>
-    <h1>${esc(headline(report, base))}</h1>
-    <p class="context">${esc(context)}</p>
-  </header>
-
-  <div class="panels">
-    ${scorePanel(report, report.guarded ? 'With the guard' : 'Without the guard')}
-    ${base ? scorePanel(base, 'Without the guard') : ''}
+<div class="site-head">
+  <div class="site-head-inner">
+    <a class="brand" href="#overview">Agent Wallet Guard</a>
+    <nav class="tabs" role="tablist" aria-label="Report sections">
+      ${tabs.map((t) => `<a role="tab" id="tab-${t.id}" href="#${t.id}" aria-controls="${t.id}">${esc(t.label)}</a>`).join('\n      ')}
+    </nav>
   </div>
-
-  ${primary.hold ? holdSection(primary.hold, Boolean(base)) : ''}
-
-  <section class="block">
-    <h2>What each attack did</h2>
-    <p>Each row is one attempt to make the agent pay the wrong party, pay too much, pay twice, or hand over goods without being paid.</p>
-    ${scenarioTable(report, base, false)}
-  </section>
-
-  ${
-    honest
-      ? `<section class="block">
-    <h2>Honest purchases</h2>
-    <p>Ordinary purchases have to keep working. A guard that blocks everything is not safe, it is broken.</p>
-    ${scenarioTable(report, base, true)}
-  </section>`
-      : ''
-  }
-
-  <section class="block">
-    <h2>Score by area</h2>
-    <p>Each area is scored out of 100 from the scenarios that test it.</p>
-    ${categoryTable(report, base)}
-  </section>
-
-  <section class="block">
-    <h2>Evidence</h2>
-    <p>Open a scenario to see what the guard decided${primary.network === 'arc-testnet' ? ' and the transactions on the Arc Testnet explorer' : ''}.</p>
-    ${evidence(primary, baseline)}
-  </section>
-
-  <footer>
-    <p>The overall score gives 80 points for attacks stopped and 20 for honest purchases completed. USDC lost counts money that reached the attacker, overpayments to a malicious merchant, and the price of goods released without a valid payment.</p>
-    <p>${primary.network === 'arc-testnet' ? 'These attacks were staged: the malicious merchant and the attacker address belong to the team, and the funds are testnet USDC with no value.' : 'This run was simulated offline. No chain was used and no funds moved.'}</p>
-  </footer>
+</div>
+<main>
+  ${tabs.map((t) => `<div class="tab" id="${t.id}" role="tabpanel" aria-labelledby="tab-${t.id}" tabindex="-1">\n    ${t.body}\n  </div>`).join('\n\n  ')}
 </main>
+<footer class="site-foot">
+  <p>${esc(`${report.agentName}, ${primary.network === 'arc-testnet' ? 'Arc Testnet' : 'simulated ledger'}, ${whenText(report.startedAt)}`)}</p>
+</footer>
+<script>${TABS_SCRIPT}</script>
 </body>
 </html>
 `;
 }
+
+interface Tab {
+  id: string;
+  label: string;
+  /** Trusted markup built by this file; every value from a report inside it is escaped. */
+  body: string;
+}
+
+/** What the guard does, for a reader who has not seen the project. Static text, no run data. */
+function howItWorks(staged: string): string {
+  return `<section class="block">
+      <h2>How it works</h2>
+      <p>The AI agent never holds the wallet's key. It asks the guard to pay, and the guard decides.</p>
+      <div class="pillars">
+        <section><h3>Hold</h3><p>The agent spends from a hot wallet with a fixed cap. Anything above the cap is moved to a vault that no request from the agent can touch, so a compromised agent can lose the cap at most.</p></section>
+        <section><h3>Send</h3><p>The guard records the merchant's quote itself. A payment goes out only if the recipient and amount match that quote, the recipient is approved, the spending limits allow it, and it is not a repeat.</p></section>
+        <section><h3>Receive</h3><p>Before goods are released, the guard checks the payment on the chain: the transaction exists and is confirmed, the token is real USDC, the amount is enough, and it has not been used before.</p></section>
+      </div>
+    </section>
+    <section class="block">
+      <h2>How it is tested</h2>
+      <p>A built-in red team runs each attack against the agent, then runs ordinary purchases to make sure the guard does not block legitimate payments.</p>
+      <div class="prose">
+        <p>The overall score gives 80 points for attacks stopped and 20 for honest purchases completed. USDC lost counts money that reached the attacker, overpayments to a malicious merchant, and the price of goods released without a valid payment.</p>
+        <p>${esc(staged)}</p>
+      </div>
+    </section>`;
+}
+
+/**
+ * Turns the stacked sections into tabs. Without it (scripts blocked, or printing) every
+ * section stays visible in order, so the page never depends on this running.
+ */
+const TABS_SCRIPT = `
+(function(){
+  var tabs=[].slice.call(document.querySelectorAll('.tabs [role=tab]'));
+  var panels=[].slice.call(document.querySelectorAll('.tab'));
+  if(!tabs.length)return;
+  document.documentElement.classList.add('tabbed');
+  function show(id,focusTab){
+    if(!document.getElementById(id))id=panels[0].id;
+    panels.forEach(function(p){p.hidden=p.id!==id;});
+    tabs.forEach(function(t){
+      var on=t.getAttribute('aria-controls')===id;
+      t.setAttribute('aria-selected',on?'true':'false');
+      t.tabIndex=on?0:-1;
+      if(on&&focusTab)t.focus();
+      if(on&&t.scrollIntoView)t.scrollIntoView({block:'nearest',inline:'nearest'});
+    });
+    window.scrollTo(0,0);
+  }
+  function go(id,focusTab){
+    if(location.hash!=='#'+id)history.pushState(null,'','#'+id);
+    show(id,focusTab);
+  }
+  document.addEventListener('click',function(e){
+    var a=e.target.closest&&e.target.closest('a[href^="#"]');
+    if(!a)return;
+    var id=a.getAttribute('href').slice(1);
+    if(!document.getElementById(id)||!document.getElementById('tab-'+id))return;
+    e.preventDefault();
+    go(id,false);
+  });
+  document.querySelector('.tabs').addEventListener('keydown',function(e){
+    var i=tabs.indexOf(document.activeElement);
+    if(i<0)return;
+    var n=e.key==='ArrowRight'?i+1:e.key==='ArrowLeft'?i-1:e.key==='Home'?0:e.key==='End'?tabs.length-1:-1;
+    if(n<0&&e.key!=='ArrowLeft')return;
+    e.preventDefault();
+    go(tabs[(n+tabs.length)%tabs.length].getAttribute('aria-controls'),true);
+  });
+  window.addEventListener('hashchange',function(){show(location.hash.slice(1),false);});
+  window.addEventListener('popstate',function(){show(location.hash.slice(1),false);});
+  show(location.hash.slice(1),false);
+})();
+`;
 
 const stamp = (saved: SavedReport): string => saved.report.startedAt.replace(/[:.]/g, '-');
 

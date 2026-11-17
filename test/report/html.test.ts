@@ -53,7 +53,23 @@ describe('renderHtml', () => {
     expect(html).toContain('Swapped payTo');
     expect(html).not.toContain('#1 Swapped payTo');
     expect(html.match(/class="panel /g)).toHaveLength(2);
-    expect(html).not.toContain('<script');
+  });
+
+  it('lays the report out as tabs, leaving out the ones with nothing to show', () => {
+    const tabsOf = (html: string) => [...html.matchAll(/role="tab" id="tab-([a-z]+)"/g)].map((m) => m[1]);
+    const withHold = { ...saved(true), hold: { hotCap: parseUsdc('10'), hot: parseUsdc('10'), vault: parseUsdc('90'), swept: 0n } };
+
+    expect(tabsOf(renderHtml(withHold, saved(false)))).toEqual(['overview', 'attacks', 'purchases', 'wallet', 'evidence', 'how']);
+    // No hold data recorded: no Wallet tab.
+    expect(tabsOf(renderHtml(saved(true)))).toEqual(['overview', 'attacks', 'purchases', 'evidence', 'how']);
+
+    const html = renderHtml(withHold);
+    for (const id of tabsOf(html)) {
+      expect(html).toContain(`<div class="tab" id="${id}" role="tabpanel" aria-labelledby="tab-${id}"`);
+    }
+    // Panels are only hidden by the script, so the page still reads top to bottom without it.
+    expect(html).not.toMatch(/<div class="tab"[^>]*hidden/);
+    expect(html.match(/<script>/g)).toHaveLength(1);
   });
 
   it('links transactions to the explorer only for runs on Arc Testnet', () => {
@@ -82,6 +98,8 @@ describe('renderHtml', () => {
     const html = renderHtml(report, saved(false));
     expect(html).not.toContain('<img');
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;&quot;&#39;&amp;');
+    // The only script on the page is the page's own tab script.
+    expect(html.match(/<script/g)).toHaveLength(1);
   });
 });
 
@@ -99,7 +117,8 @@ describe('renderHtml accuracy', () => {
     report.report.results[0] = result({ passed: false, usdcLost: parseUsdc('0.5'), error: '<script>alert(1)</script>' });
     const html = renderHtml(report);
     expect(html).toContain('also failed: &lt;script&gt;alert(1)&lt;/script&gt;');
-    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<script>alert');
+    expect(html.match(/<script/g)).toHaveLength(1);
   });
 
   it('still says "did not run" for an error with no loss', () => {
