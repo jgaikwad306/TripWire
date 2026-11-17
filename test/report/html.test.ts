@@ -85,6 +85,109 @@ describe('renderHtml', () => {
   });
 });
 
+describe('renderHtml accuracy', () => {
+  it('shows the loss, not "did not run", when a scenario lost money and then errored', () => {
+    const report = saved(false);
+    report.report.results[0] = result({ passed: false, usdcLost: parseUsdc('0.5'), error: 'RPC went away' });
+    const html = renderHtml(report);
+    expect(html).toContain('<span class="outcome">Lost 0.5 USDC</span><span class="why">also failed: RPC went away</span>');
+    expect(html).not.toContain('<span class="outcome">Did not run</span>');
+  });
+
+  it('escapes the error text shown beside a loss', () => {
+    const report = saved(false);
+    report.report.results[0] = result({ passed: false, usdcLost: parseUsdc('0.5'), error: '<script>alert(1)</script>' });
+    const html = renderHtml(report);
+    expect(html).toContain('also failed: &lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('<script');
+  });
+
+  it('still says "did not run" for an error with no loss', () => {
+    const report = saved(true);
+    report.report.results[0] = result({ passed: false, error: 'No wallet' });
+    expect(renderHtml(report)).toContain('<span class="outcome">Did not run</span><span class="why">No wallet</span>');
+  });
+
+  it('describes the price check as a comparison with the expected price', () => {
+    const report = saved(true);
+    report.report.results[0] = result({ decisions: [{ allowed: false, check: 'price', reason: 'Too expensive.' }] });
+    const html = renderHtml(report);
+    expect(html).toContain('the price was above the expected price');
+    expect(html).not.toContain('above the quote');
+  });
+
+  it('does not credit a missing guard with stopping attacks', () => {
+    const open = renderHtml(saved(false));
+    expect(open).toContain('<dt>Attacks that cost nothing</dt><dd>0 of 1</dd>');
+    expect(open).not.toContain('Attacks stopped');
+    expect(renderHtml(saved(true))).toContain('<dt>Attacks stopped</dt><dd>1 of 1</dd>');
+  });
+});
+
+describe('report --html with explicit paths', () => {
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'awg-html-'));
+    const write = (name: string, s: SavedReport): string => {
+      const path = join(dir, name);
+      writeFileSync(path, serializeReport(s));
+      return path;
+    };
+    const lines: string[] = [];
+    const html = (...args: string[]) => reportCommand(['--html', '--out', dir, ...args], { log: (l) => lines.push(l), env: {} });
+    const page = () => readFileSync(lines.join('\n').replace('Page: ', ''), 'utf8');
+    return { dir, write, html, page };
+  };
+
+  it('puts the guarded run first even when the paths are given the other way round', async () => {
+    const { dir, write, html, page } = setup();
+    try {
+      const guarded = write('g.json', saved(true));
+      const open = write('n.json', saved(false));
+      await html(open, guarded);
+      expect(page()).toContain('With the guard, 1 of 1 attack failed and no money was lost. Without it, the same agent lost 0.5 USDC.');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('renders one named run on its own, with no baseline', async () => {
+    const { dir, write, html, page } = setup();
+    try {
+      await html(write('n.json', saved(false)));
+      expect(page()).toContain('With no guard, the agent lost 0.5 USDC across 1 attack.');
+      expect(page().match(/class="panel /g)).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses two runs that are both guarded or both unguarded', async () => {
+    const { dir, write, html } = setup();
+    try {
+      const a = write('a.json', saved(true));
+      const b = write('b.json', saved(true, 'arc-testnet', '2026-11-17T05:00:00.000Z'));
+      await expect(html(a, b)).rejects.toThrow(/one run with the guard and one without/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses runs from different networks, agents or scenario sets', async () => {
+    const { dir, write, html } = setup();
+    try {
+      const guarded = write('g.json', saved(true));
+      const offline = write('n.json', saved(false, 'fake'));
+      await expect(html(guarded, offline)).rejects.toThrow(/same agent, network and scenarios/);
+
+      const otherAgent = saved(false);
+      const renamed: SavedReport = { ...otherAgent, report: { ...otherAgent.report, agentName: 'naive-scripted' } };
+      await expect(html(guarded, write('o.json', renamed))).rejects.toThrow(/same agent, network and scenarios/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('report --html', () => {
   it('pairs the newest unguarded run with a guarded run over the same scenarios', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'awg-html-'));

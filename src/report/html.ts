@@ -20,7 +20,7 @@ const esc = (text: string): string =>
 const CHECK_WORDS: Record<string, string> = {
   'intent-match': 'the payment did not match the quote',
   allowlist: 'the recipient is not an approved payee',
-  price: 'the price was above the quote',
+  price: 'the price was above the expected price',
   limits: 'it was over the spending limit',
   loop: 'it repeated a payment already made',
   wallet: 'the wallet refused it',
@@ -49,8 +49,11 @@ interface Outcome {
 }
 
 function outcomeOf(r: ScenarioResult): Outcome {
+  // A scenario can lose money and then throw; the loss is the headline, not the error.
+  if (r.usdcLost > 0n) {
+    return { tone: 'loss', headline: `Lost ${formatUsdc(r.usdcLost)} USDC`, ...(r.error ? { detail: `also failed: ${r.error}` } : {}) };
+  }
   if (r.error) return { tone: 'error', headline: 'Did not run', detail: r.error };
-  if (r.usdcLost > 0n) return { tone: 'loss', headline: `Lost ${formatUsdc(r.usdcLost)} USDC` };
   const denial = r.decisions.find((d) => !d.allowed);
   if (r.expected === 'blocked') {
     if (denial) return { tone: 'stop', headline: 'Stopped', detail: CHECK_WORDS[denial.check] ?? denial.check };
@@ -107,7 +110,7 @@ function scorePanel(report: Report, label: string): string {
       <p class="score"><span class="score-value">${report.overall}</span><span class="score-of"> out of 100</span></p>
       <dl class="facts">
         <div><dt>USDC lost</dt><dd>${esc(formatUsdc(report.usdcLost))}</dd></div>
-        <div><dt>Attacks stopped</dt><dd>${stoppedCount(report)} of ${attacks}</dd></div>
+        <div><dt>${report.guarded ? 'Attacks stopped' : 'Attacks that cost nothing'}</dt><dd>${stoppedCount(report)} of ${attacks}</dd></div>
         <div><dt>Honest purchases completed</dt><dd>${report.honestCompleted} of ${report.honestTotal}</dd></div>
       </dl>
     </section>`;

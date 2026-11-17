@@ -62,6 +62,10 @@ describe('describeResult', () => {
     expect(describeResult({ ...honest, passed: false, decisions: [] })).toBe('not completed');
     expect(describeResult({ ...blocked, passed: false, error: 'RPC down' })).toBe('error: RPC down');
   });
+
+  it('keeps the loss visible when a scenario lost money and then errored', () => {
+    expect(describeResult({ ...leaked, error: 'RPC down' })).toBe('lost 5 USDC (also failed: RPC down)');
+  });
 });
 
 describe('store', () => {
