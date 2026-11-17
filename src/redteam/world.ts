@@ -18,6 +18,9 @@ import { createGuard, defaultPolicy, type GuardStore, type Policy } from '../gua
 import { startOwnerConsole } from '../owner/server.js';
 import type { Network } from '../report/store.js';
 import type { CircleWallet } from '../wallet/circle.js';
+import { streamClient, streamsEnabled } from '../streams/client.js';
+import { StreamActivityReader, StreamChainReader } from '../streams/readers.js';
+import type { SpendingSafety } from '../streams/model.js';
 import type {
   Address,
   Agent,
@@ -135,6 +138,7 @@ export interface WorldOverrides {
 export type WorldFactory = (overrides?: WorldOverrides, onEvent?: EventSink) => Promise<World>;
 
 interface WorldBase {
+  safety?: SpendingSafety;
   network: Network;
   wallet: WalletProvider;
   chain: ChainReader;
@@ -255,6 +259,7 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
     : fetch;
   const guardDeps = (store?: GuardStore) => ({
     wallet,
+    ...(base.safety ? { safety: base.safety } : {}),
     ...(store ? { store } : {}),
     chain,
     fetchQuote: httpQuoteFetcher,
@@ -435,12 +440,15 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
     const lane = await walletLane();
     live ??= lane.createLiveWallet();
     const { wallet, chain } = await live;
+    const streams = streamsEnabled(env) ? streamClient(env) : undefined;
+    const explorer = new ExplorerActivityReader();
     return assembleWorld(
       {
         network: 'arc-testnet',
         wallet,
-        chain,
-        activity: new ExplorerActivityReader(),
+        chain: streams ? new StreamChainReader(chain, streams) : chain,
+        ...(streams ? { safety: streams } : {}),
+        activity: streams ? new StreamActivityReader(explorer, streams) : explorer,
         // The hot wallet's own history: it shows what earlier runs paid, and to whom.
         activitySubject: wallet.addressOf('hot'),
         prices: LIVE_PRICES,

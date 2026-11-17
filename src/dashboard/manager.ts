@@ -8,6 +8,7 @@ import { jsonSafe } from '../redteam/scenarios/helpers.js';
 import { DEFAULT_REPORT_DIR, type SavedReport } from '../report/store.js';
 import { saveHtmlReport } from '../report/html.js';
 import { FOCUSED_SCENARIOS, scenarioCatalog } from './catalog.js';
+import { streamsEnabled } from '../streams/client.js';
 
 export const runConfigSchema = z.object({
   scenarioIds: z.array(z.string()).min(1).max(19).refine((ids) => new Set(ids).size === ids.length, 'Select each scenario once.'),
@@ -73,7 +74,7 @@ export class RunManager {
   config() {
     const defaults: RunConfig = { scenarioIds: FOCUSED_SCENARIOS, network: 'arc-testnet', agent: 'grok', ...this.options.defaults };
     // Only readiness booleans/names cross the boundary, never environment values.
-    return { defaults, scenarios: scenarioCatalog(), agents: AGENT_KINDS, model: this.env.XAI_MODEL ?? null,
+    return { defaults, scenarios: scenarioCatalog(), agents: AGENT_KINDS, model: this.env.XAI_MODEL ?? null, streamsEnabled: streamsEnabled(this.env),
       configured: Object.fromEntries(['XAI_API_KEY', 'XAI_MODEL', 'CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'WALLET_ID_HOT', 'WALLET_ID_VAULT', 'WALLET_ID_MERCHANT', 'ATTACKER_PRIVATE_KEY', 'FAKE_USDC_ADDRESS'].map((key) => [key, Boolean(this.env[key])])) };
   }
 

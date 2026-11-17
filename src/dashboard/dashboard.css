@@ -313,6 +313,8 @@ main{padding:28px 24px}
 
 .column-tag{max-width:58%;overflow:hidden;text-overflow:ellipsis}
 .sidebar-bottom strong,.sidebar-bottom span:not(.dot){overflow-wrap:anywhere}
+#streams-monitor .section-title{flex-wrap:wrap;gap:12px}
+#streams-details{overflow-wrap:anywhere}
 
 
 @media(max-width:650px){.page-actions .stop:not([hidden]){position:fixed;bottom:16px;right:16px;z-index:20;box-shadow:0 5px 25px #0009}}
