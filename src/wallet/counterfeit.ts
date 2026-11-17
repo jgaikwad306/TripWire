@@ -15,7 +15,20 @@ import type { Address, TxHash } from '../types.js';
 
 const SOURCE_PATH = fileURLToPath(new URL('../../contracts/FakeUSDC.sol', import.meta.url));
 
-export function compileFakeUsdc(): { abi: Abi; bytecode: Hex } {
+interface CompiledContract {
+  abi: Abi;
+  bytecode: Hex;
+}
+
+let compiled: CompiledContract | undefined;
+
+/** Compiles FakeUSDC once per process; every later call reuses the result. */
+export function compileFakeUsdc(): CompiledContract {
+  compiled ??= compileSource();
+  return compiled;
+}
+
+function compileSource(): CompiledContract {
   const input = {
     language: 'Solidity',
     sources: { 'FakeUSDC.sol': { content: readFileSync(SOURCE_PATH, 'utf8') } },

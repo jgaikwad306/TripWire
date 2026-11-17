@@ -75,6 +75,9 @@ const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n =
 /** "#5 Fake owner override" → "Fake owner override". The number is a sort key, not content. */
 const plainTitle = (title: string): string => title.replace(/^(#\d+|H\d+)\s+/, '');
 
+/** For a headline used mid-sentence. Only the first letter changes, so "USDC" keeps its capitals. */
+const lowerFirst = (text: string): string => text.charAt(0).toLowerCase() + text.slice(1);
+
 const whenText = (iso: string): string => {
   const date = new Date(iso);
   return Number.isNaN(date.getTime())
@@ -216,7 +219,7 @@ function evidenceFor(saved: SavedReport, r: ScenarioResult, label: string): stri
     .map((d) => `<li><span class="verdict verdict-${d.allowed ? 'yes' : 'no'}">${d.allowed ? 'Allowed' : 'Denied'}</span> ${esc(d.reason)}</li>`)
     .join('');
   return `<div class="run">
-          <h4>${esc(label)}: ${esc(outcomeOf(r).headline.toLowerCase())}</h4>
+          <h4>${esc(label)}: ${esc(lowerFirst(outcomeOf(r).headline))}</h4>
           ${decisions ? `<ul class="decisions">${decisions}</ul>` : '<p class="quiet">The guard was not asked to decide anything.</p>'}
           ${r.txHashes.length ? `<p class="txs">Transactions: ${r.txHashes.map((h) => txLink(saved, h)).join(' ')}</p>` : ''}
           ${r.notes ? `<p class="said">Agent said: ${esc(r.notes)}</p>` : ''}
@@ -417,7 +420,7 @@ export function renderHtml(primary: SavedReport, baseline?: SavedReport): string
         ]
       : []),
     ...(primary.hold ? [{ id: 'wallet', label: 'Wallet', body: holdSection(primary.hold, Boolean(base)) }] : []),
-    ...(hasTranscripts(primary) ? [{ id: 'replay', label: 'Replay', body: replaySection(primary, baseline) }] : []),
+    ...(hasTranscripts(primary) || (baseline !== undefined && hasTranscripts(baseline)) ? [{ id: 'replay', label: 'Replay', body: replaySection(primary, baseline) }] : []),
     {
       id: 'evidence',
       label: 'Evidence',
@@ -505,6 +508,19 @@ function annotate(text: string, parties: Parties | undefined): string {
   return out;
 }
 
+/**
+ * Who answered a payment request, judged from the reply itself. A reply with no verdict
+ * means the request was malformed and was turned away before any guard or wallet saw it.
+ */
+function paymentReply(result: unknown, guarded: boolean): { who: string; denied: boolean } {
+  const allowed = typeof result === 'object' && result !== null ? (result as { allowed?: unknown }).allowed : undefined;
+  if (typeof allowed !== 'boolean') {
+    return { who: guarded ? 'Request never reached the guard' : 'Request never reached the wallet', denied: true };
+  }
+  if (guarded) return { who: allowed ? 'Guard decided' : 'Guard decided: denied', denied: !allowed };
+  return { who: allowed ? 'No guard, so the wallet paid' : 'No guard, but the wallet could not pay', denied: !allowed };
+}
+
 function replaySteps(saved: SavedReport, r: ScenarioResult): string {
   const { parties } = saved;
   const step = (cls: string, who: string, body: string): string =>
@@ -525,13 +541,12 @@ function replaySteps(saved: SavedReport, r: ScenarioResult): string {
           return step('from-merchant', 'Merchant', prose(entry.text));
         case 'tool': {
           const [call, reply] = TOOL_WORDS[entry.name] ?? [`Agent called ${entry.name}`, 'Reply'];
-          const isPayment = entry.name === 'request_payment';
-          const allowed = isPayment && typeof entry.result === 'object' && entry.result !== null
-            ? (entry.result as { allowed?: unknown }).allowed
-            : undefined;
-          const replyWho = isPayment && !saved.report.guarded ? 'No guard, so the wallet paid' : reply;
-          const replyCls = isPayment ? (allowed === false ? 'from-guard is-denied' : 'from-guard') : entry.name === 'check_balance' ? 'from-guard' : 'from-merchant';
-          return step('from-agent', call, data(entry.args)) + step(replyCls, allowed === false ? `${replyWho}: denied` : replyWho, data(entry.result));
+          const asked = step('from-agent', call, data(entry.args));
+          if (entry.name === 'request_payment') {
+            const { who, denied } = paymentReply(entry.result, saved.report.guarded);
+            return asked + step(denied ? 'from-guard is-denied' : 'from-guard', who, data(entry.result));
+          }
+          return asked + step(entry.name === 'check_balance' ? 'from-guard' : 'from-merchant', reply, data(entry.result));
         }
       }
     })
@@ -541,7 +556,7 @@ function replaySteps(saved: SavedReport, r: ScenarioResult): string {
 function replayFor(saved: SavedReport, r: ScenarioResult, label: string): string {
   const steps = replaySteps(saved, r);
   return `<div class="run">
-          <h4>${esc(label)}: ${esc(outcomeOf(r).headline.toLowerCase())}</h4>
+          <h4>${esc(label)}: ${esc(lowerFirst(outcomeOf(r).headline))}</h4>
           ${steps ? `<ol class="steps">\n          ${steps}\n          </ol>` : '<p class="quiet">Nothing was recorded for this run.</p>'}
         </div>`;
 }

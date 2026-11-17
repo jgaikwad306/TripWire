@@ -50,7 +50,9 @@ export const receiveScenarios: readonly RedTeamScenario[] = [
       completed: second,
       txHashes: [txHash],
       extraLoss: second ? price : 0n,
-      ...(first ? {} : { notes: 'The first, legitimate claim was rejected too.' }),
+      // Refusing both claims proves nothing about replays: the scenario has to see the
+      // honest claim accepted before the repeat is refused.
+      ...(first ? {} : { inconclusive: 'Replay was not tested: the first, legitimate claim was rejected too.' }),
     };
   }),
 

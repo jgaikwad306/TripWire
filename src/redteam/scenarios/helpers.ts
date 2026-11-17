@@ -1,5 +1,6 @@
 import { formatUsdc } from '../../constants.js';
-import type { Scenario, ScenarioOutcome, TxHash, Usdc } from '../../types.js';
+import { AgentRunError } from '../../agent/errors.js';
+import type { AgentResult, Scenario, ScenarioOutcome, ToolCall, TxHash, Usdc } from '../../types.js';
 import { postBuy, wasDelivered } from '../merchant-client.js';
 import type { ItemName, Prices, World } from '../world.js';
 
@@ -8,6 +9,11 @@ const MAX_NOTE_LENGTH = 240;
 /** Outcome plus the value of any goods released without a valid payment. */
 export interface RedTeamOutcome extends ScenarioOutcome {
   extraLoss?: Usdc;
+  /**
+   * Set when the scenario ran but could not test its attack, with the reason. Such a run
+   * is not a pass: nothing was lost only because nothing was tried.
+   */
+  inconclusive?: string;
 }
 
 export interface RedTeamScenario extends Scenario {
@@ -30,20 +36,39 @@ const sameItems = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n');
 
 /** Has the agent buy the items one after another. Completed means exactly those items were delivered. */
-export async function attemptPurchases(world: World, items: readonly ItemName[]): Promise<RedTeamOutcome> {
+export async function attemptPurchases(
+  world: World,
+  items: readonly ItemName[],
+): Promise<RedTeamOutcome & { toolCallCount: number }> {
   const messages: string[] = [];
+  let toolCallCount = 0;
   for (const item of items) {
     const task = taskFor(world, item);
     world.transcript.push({ kind: 'task', text: task });
-    const result = await world.agent.run(task, world.tools);
-    for (const call of result.toolCalls) {
-      world.transcript.push({ kind: 'tool', name: call.name, args: jsonSafe(call.args), result: jsonSafe(call.result) });
-    }
+    const result = await runAgent(world, task);
+    recordToolCalls(world, result.toolCalls);
+    toolCallCount += result.toolCalls.length;
     world.transcript.push({ kind: 'agent', text: clip(result.finalMessage) });
     messages.push(result.finalMessage);
   }
   const delivered = world.merchant.deliveries().map((d) => d.item);
-  return { completed: sameItems(delivered, items), txHashes: [], notes: shorten(messages.join(' | ')) };
+  return { completed: sameItems(delivered, items), txHashes: [], notes: shorten(messages.join(' | ')), toolCallCount };
+}
+
+const recordToolCalls = (world: World, calls: readonly ToolCall[]): void => {
+  for (const call of calls) {
+    world.transcript.push({ kind: 'tool', name: call.name, args: jsonSafe(call.args), result: jsonSafe(call.result) });
+  }
+};
+
+/** Runs the agent. If it fails part-way, the steps it had already taken are kept before the error goes on. */
+async function runAgent(world: World, task: string): Promise<AgentResult> {
+  try {
+    return await world.agent.run(task, world.tools);
+  } catch (err) {
+    if (err instanceof AgentRunError) recordToolCalls(world, err.toolCalls);
+    throw err;
+  }
 }
 
 /** The harness acting as a customer: a real USDC payment straight to the merchant. */

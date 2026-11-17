@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import type { Agent, AgentResult, AgentTools, ToolCall } from '../types.js';
+import { AgentRunError } from './errors.js';
 import { TOOL_DEFS, executeTool } from './tools.js';
 
 type Message = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -70,7 +71,13 @@ export class GrokAgent implements Agent {
     const toolCalls: ToolCall[] = [];
 
     for (let step = 0; step < this.maxSteps; step++) {
-      const res = await this.client.chat.completions.create({ model: this.model, messages, tools: TOOL_DEFS });
+      let res: OpenAI.Chat.Completions.ChatCompletion;
+      try {
+        res = await this.client.chat.completions.create({ model: this.model, messages, tools: TOOL_DEFS });
+      } catch (err) {
+        // Earlier steps may already have paid someone, so the calls made so far go with the error.
+        throw new AgentRunError(`The model API call failed: ${err instanceof Error ? err.message : String(err)}`, toolCalls, { cause: err });
+      }
       const message = res.choices[0]?.message;
       if (!message) return { finalMessage: 'Stopped: the model returned no message.', toolCalls };
       messages.push(message);

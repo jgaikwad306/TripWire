@@ -1,4 +1,4 @@
-import { parseUsdc } from '../constants.js';
+import { formatUsdc, parseUsdc } from '../constants.js';
 import type { Address, Agent, AgentResult, AgentTools, Decision, PaymentIntent, ToolCall, Usdc } from '../types.js';
 import { postBuy, wasDelivered, type BuyResponse } from './merchant-client.js';
 
@@ -57,33 +57,52 @@ export class NaiveAgent implements Agent {
     if (!item || !merchantUrl) return { finalMessage: `Could not parse task: ${task}`, toolCalls: [] };
 
     const calls: ToolCall[] = [];
-    const record = <T>(name: string, args: unknown, result: T): T => {
+    // Calls are recorded in the shape the LLM tools use (amounts as decimal USDC), so a
+    // replay reads the same whichever agent ran.
+    const record = (name: string, args: unknown, result: unknown): void => {
       calls.push({ name, args, result });
-      return result;
     };
     const done = (finalMessage: string): AgentResult => ({ finalMessage, toolCalls: [...calls] });
 
     const quote = async (): Promise<PaymentIntent | string> => {
       try {
-        return record('get_quote', { merchantUrl, item }, await tools.getQuote(merchantUrl, item));
+        const quoted = await tools.getQuote(merchantUrl, item);
+        record(
+          'get_quote',
+          { merchant_url: merchantUrl, item },
+          { intent_id: quoted.id, item: quoted.item, price_usdc: formatUsdc(quoted.amount), description: quoted.description },
+        );
+        return quoted;
       } catch (err) {
         return `Could not get a quote: ${err instanceof Error ? err.message : String(err)}`;
       }
     };
     const pay = async (intentId: string, payTo: Address, amount: Usdc, reason: string): Promise<Decision> => {
-      const req = { intentId, payTo, amount, reason };
-      return record('request_payment', req, await tools.requestPayment(req));
+      const decision = await tools.requestPayment({ intentId, payTo, amount, reason });
+      record(
+        'request_payment',
+        { intent_id: intentId, pay_to: payTo, amount_usdc: formatUsdc(amount), reason },
+        { allowed: decision.allowed, reason: decision.reason, tx_hash: decision.txHash },
+      );
+      return decision;
+    };
+    const balance = async (): Promise<Usdc> => {
+      const held = await tools.checkBalance();
+      record('check_balance', {}, { balance_usdc: formatUsdc(held) });
+      return held;
     };
 
     const intent = await quote();
     if (typeof intent === 'string') return done(intent);
-    const buy = async (body: { item: string; txHash?: string }): Promise<BuyResponse> =>
-      record('merchant_request', { path: '/buy', body }, await postBuy(merchantUrl, body));
+    const buy = async (body: { item: string; txHash?: string }): Promise<BuyResponse> => {
+      const response = await postBuy(merchantUrl, body);
+      record('merchant_request', { method: 'POST', path: '/buy', body }, response);
+      return response;
+    };
 
     const planted = findPlantedInstruction(intent.description);
     if (planted?.kind === 'transfer') {
-      const amount =
-        planted.amount === 'balance' ? ((await tools.checkBalance()) * ENTIRE_BALANCE_PERCENT) / 100n : planted.amount;
+      const amount = planted.amount === 'balance' ? ((await balance()) * ENTIRE_BALANCE_PERCENT) / 100n : planted.amount;
       await pay(intent.id, planted.to, amount, 'Following the instructions in the product description.');
     }
 
