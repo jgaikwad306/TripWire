@@ -1,4 +1,7 @@
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { saveHtmlReport } from '../report/html.js';
 import { CAREFUL_SYSTEM_PROMPT, GrokAgent } from '../agent/grok.js';
 import { ARC_TESTNET, formatUsdc } from '../constants.js';
 import { describeResult, renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
@@ -122,7 +125,8 @@ async function runOnce(opts: {
     report: buildReport(results, { agentName: agent.name, guarded, startedAt }),
   };
   const paths = saveReport(saved, renderMarkdown(saved), outDir);
-  io.log(`\n${renderTerminal(saved)}\n\nReport written to ${paths.markdownPath} and ${paths.jsonPath}`);
+  const htmlPath = saveHtmlReport(saved, undefined, outDir);
+  io.log(`\n${renderTerminal(saved)}\n\nReport written to ${paths.markdownPath} and ${paths.jsonPath}\nPage: ${htmlPath}`);
   return saved;
 }
 
@@ -161,15 +165,57 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
   const guarded = await runOnce({ ...base, guarded: true });
   const baseline = await runOnce({ ...base, guarded: false });
   io.log(`\n${renderComparison(guarded.report, baseline.report)}`);
+  io.log(`\nComparison page: ${saveHtmlReport(guarded, baseline, values.out)}`);
 }
 
-/** `npm run cli report [path]` — re-renders a saved report (the latest one by default). */
+const scenarioKey = (saved: SavedReport): string =>
+  [saved.network, saved.report.agentName, ...saved.report.results.map((r) => r.id).sort()].join('|');
+
+/**
+ * The newest guarded run and the newest unguarded run that covered the same scenarios
+ * with the same agent on the same network, so the two can be shown side by side.
+ */
+export function latestPair(dir: string): { guarded: SavedReport; baseline: SavedReport } | undefined {
+  if (!existsSync(dir)) return undefined;
+  const saved: SavedReport[] = [];
+  for (const name of readdirSync(dir).filter((n) => n.endsWith('.json')).sort().reverse()) {
+    try {
+      saved.push(loadReport(join(dir, name)));
+    } catch {
+      // A file that is not a report is not this command's problem.
+    }
+  }
+  for (const baseline of saved.filter((s) => !s.report.guarded)) {
+    const guarded = saved.find((s) => s.report.guarded && scenarioKey(s) === scenarioKey(baseline));
+    if (guarded) return { guarded, baseline };
+  }
+  return undefined;
+}
+
+/**
+ * `npm run cli report [path] [baselinePath]` — re-renders a saved report (the latest by default).
+ * `--html` writes the page instead: for the given report(s), or with no path for the newest
+ * guarded and unguarded runs over the same scenarios.
+ */
 export async function reportCommand(args: string[], io: CommandIo = defaultIo()): Promise<void> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
-    options: { out: { type: 'string', default: DEFAULT_REPORT_DIR }, markdown: { type: 'boolean', default: false } },
+    options: {
+      out: { type: 'string', default: DEFAULT_REPORT_DIR },
+      markdown: { type: 'boolean', default: false },
+      html: { type: 'boolean', default: false },
+    },
   });
+  if (values.html) {
+    const pair = positionals.length === 0 ? latestPair(values.out) : undefined;
+    const primaryPath = positionals[0] ?? latestReportPath(values.out);
+    if (!pair && !primaryPath) throw new Error(`No reports in ${values.out}/ yet. Run \`npm run cli run -- --all --fake\` first.`);
+    const primary = pair?.guarded ?? loadReport(primaryPath!);
+    const baseline = pair?.baseline ?? (positionals[1] ? loadReport(positionals[1]) : undefined);
+    io.log(`Page: ${saveHtmlReport(primary, baseline, values.out)}`);
+    return;
+  }
   const path = positionals[0] ?? latestReportPath(values.out);
   if (!path) throw new Error(`No reports in ${values.out}/ yet. Run \`npm run cli run -- --all --fake\` first.`);
   const saved = loadReport(path);
