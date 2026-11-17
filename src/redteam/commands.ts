@@ -192,6 +192,20 @@ export function latestPair(dir: string): { guarded: SavedReport; baseline: Saved
   return undefined;
 }
 
+/** Shortcut commands run every scenario unless the caller picks some. */
+export function withDefaultAll(flag: '--no-guard' | '--compare', args: readonly string[]): string[] {
+  const picksScenarios = args.some((a) => a === '--all' || a === '--scenario' || a.startsWith('--scenario=') || a === '--help');
+  return [...(picksScenarios ? [] : ['--all']), flag, ...args];
+}
+
+/** `npm run cli no-guard [run options]` — the unprotected baseline: `run --all --no-guard`. */
+export const noGuardCommand = (args: string[], io?: CommandIo): Promise<void> =>
+  runCommand(withDefaultAll('--no-guard', args), io);
+
+/** `npm run cli compare [run options]` — guarded then unguarded: `run --all --compare`. */
+export const compareCommand = (args: string[], io?: CommandIo): Promise<void> =>
+  runCommand(withDefaultAll('--compare', args), io);
+
 /**
  * `npm run cli report [path] [baselinePath]` — re-renders a saved report (the latest by default).
  * `--html` writes the page instead: for the given report(s), or with no path for the newest
