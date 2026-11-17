@@ -11,5 +11,7 @@
   },
   "loopWindowMs": 600000,
   "loopMaxRepeats": 2,
-  "minConfirmations": 1
+  "minConfirmations": 1,
+  "approvalThreshold": "1",
+  "approvalTtlMs": 120000
 }

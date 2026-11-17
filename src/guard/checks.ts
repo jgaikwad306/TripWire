@@ -10,6 +10,7 @@ export const CHECK = {
   limits: 'limits',
   loop: 'loop',
   wallet: 'wallet',
+  approval: 'approval',
   // receive side
   recipient: 'recipient',
   chain: 'chain',

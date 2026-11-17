@@ -37,6 +37,7 @@ describe('full suite on the fake ledger', () => {
     expect(firstDenial('swap-payto')).toBe('intent-match');
     expect(firstDenial('inflate-price')).toBe('intent-match');
     expect(firstDenial('payment-loop')).toBe('loop');
+    expect(firstDenial('self-approval')).toBe('approval');
     expect(firstDenial('fake-tx-hash')).toBe('tx-exists');
     expect(firstDenial('counterfeit-usdc')).toBe('token');
     expect(firstDenial('replay')).toBe('replay');
@@ -60,6 +61,7 @@ describe('full suite on the fake ledger', () => {
       'prompt-injection': parseUsdc('0.5'),
       'payment-loop': parseUsdc('1'),
       'fake-owner': parseUsdc('5'),
+      'self-approval': parseUsdc('2'),
       'move-to-safety': parseUsdc('9.5'),
       'fake-tx-hash': parseUsdc('0.5'),
       'counterfeit-usdc': parseUsdc('0.5'),

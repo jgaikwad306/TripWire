@@ -67,7 +67,7 @@ export async function runScenario(scenario: RedTeamScenario, makeWorld: WorldFac
 
   let world: World;
   try {
-    world = await makeWorld();
+    world = await makeWorld(scenario.world);
   } catch (err) {
     return failed(`Could not set up the scenario: ${errorMessage(err)}`);
   }

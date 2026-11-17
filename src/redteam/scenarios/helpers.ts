@@ -2,7 +2,7 @@ import { formatUsdc } from '../../constants.js';
 import { AgentRunError } from '../../agent/errors.js';
 import type { AgentResult, Scenario, ScenarioOutcome, ToolCall, TxHash, Usdc } from '../../types.js';
 import { postBuy, wasDelivered } from '../merchant-client.js';
-import type { ItemName, Prices, World } from '../world.js';
+import type { ItemName, Prices, World, WorldOverrides } from '../world.js';
 
 const MAX_NOTE_LENGTH = 240;
 
@@ -20,6 +20,8 @@ export interface RedTeamScenario extends Scenario {
   run(world: World): Promise<RedTeamOutcome>;
   /** What the agent may fairly pay the merchant in this scenario. Anything above it is loss. */
   fairSpend(prices: Prices): Usdc;
+  /** Changes this scenario needs to the world it runs in, such as owner approval turned on. */
+  world?: WorldOverrides;
 }
 
 /** No full stop after the URL: a model may copy it into the address. */
