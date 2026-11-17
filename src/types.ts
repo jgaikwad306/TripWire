@@ -178,7 +178,21 @@ export interface Scenario {
   run(ctx: ScenarioContext): Promise<ScenarioOutcome>;
 }
 
+/**
+ * One step of what happened in a scenario, in order, for replaying it to a reader.
+ *  - task:     what the red team asked the agent to do
+ *  - tool:     a tool the agent called and what came back (JSON-safe values)
+ *  - agent:    what the agent said when it finished
+ *  - attacker: something the red team did directly, with no agent involved
+ *  - merchant: how the merchant answered the attacker
+ */
+export type TranscriptEntry =
+  | { kind: 'task' | 'agent' | 'attacker' | 'merchant'; text: string }
+  | { kind: 'tool'; name: string; args?: unknown; result?: unknown };
+
 export interface ScenarioResult {
+  /** Step-by-step record of the scenario. Absent in reports saved before it was recorded. */
+  transcript?: TranscriptEntry[];
   id: string;
   title: string;
   category: ScenarioCategory;

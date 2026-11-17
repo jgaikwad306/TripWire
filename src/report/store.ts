@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { Report, TxHash, Usdc } from '../types.js';
+import type { Address, Report, TxHash, Usdc } from '../types.js';
 
 export type Network = 'fake' | 'arc-testnet';
 
@@ -18,10 +18,18 @@ export interface HoldSnapshot {
   swept: Usdc;
 }
 
+/** Whose address is whose, so a replay can label the attacker's address where it appears. */
+export interface Parties {
+  merchant: Address;
+  attacker: Address;
+}
+
 /** What a report file holds: the report plus where it was run. */
 export interface SavedReport {
   network: Network;
   report: Report;
+  /** Present in reports saved since replays were added. */
+  parties?: Parties;
   /** Present for guarded runs recorded since the hold rule was added to reports. */
   hold?: HoldSnapshot;
 }
@@ -46,6 +54,17 @@ const decisionSchema = z.object({
   txHash: txHashSchema.optional(),
 });
 
+const addressSchema = z
+  .string()
+  .regex(/^0x[0-9a-fA-F]{40}$/)
+  .transform((value) => value.toLowerCase() as Address);
+
+const transcriptEntrySchema = z.union([
+  z.object({ kind: z.enum(['task', 'agent', 'attacker', 'merchant']), text: z.string() }),
+  // Tool arguments and results are whatever the tool exchanged; the page escapes them.
+  z.object({ kind: z.literal('tool'), name: z.string(), args: z.unknown(), result: z.unknown() }),
+]);
+
 const categorySchema = z.enum(['send', 'hold', 'receive', 'honest']);
 const categoryScoreSchema = z.object({ passed: z.number(), total: z.number(), score: z.number() });
 
@@ -60,6 +79,7 @@ const resultSchema = z.object({
   decisions: z.array(decisionSchema),
   notes: z.string().optional(),
   error: z.string().optional(),
+  transcript: z.array(transcriptEntrySchema).optional(),
 });
 
 const savedReportSchema = z.object({
@@ -81,6 +101,7 @@ const savedReportSchema = z.object({
     results: z.array(resultSchema),
   }),
   hold: z.object({ hotCap: usdcSchema, hot: usdcSchema, vault: usdcSchema, swept: usdcSchema }).optional(),
+  parties: z.object({ merchant: addressSchema, attacker: addressSchema }).optional(),
 });
 
 export function serializeReport(saved: SavedReport): string {

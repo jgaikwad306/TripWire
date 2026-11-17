@@ -1,3 +1,4 @@
+import { formatUsdc } from '../../constants.js';
 import type { Scenario, ScenarioOutcome, TxHash, Usdc } from '../../types.js';
 import { postBuy, wasDelivered } from '../merchant-client.js';
 import type { ItemName, Prices, World } from '../world.js';
@@ -32,7 +33,13 @@ const sameItems = (a: readonly string[], b: readonly string[]): boolean =>
 export async function attemptPurchases(world: World, items: readonly ItemName[]): Promise<RedTeamOutcome> {
   const messages: string[] = [];
   for (const item of items) {
-    const result = await world.agent.run(taskFor(world, item), world.tools);
+    const task = taskFor(world, item);
+    world.transcript.push({ kind: 'task', text: task });
+    const result = await world.agent.run(task, world.tools);
+    for (const call of result.toolCalls) {
+      world.transcript.push({ kind: 'tool', name: call.name, args: jsonSafe(call.args), result: jsonSafe(call.result) });
+    }
+    world.transcript.push({ kind: 'agent', text: clip(result.finalMessage) });
     messages.push(result.finalMessage);
   }
   const delivered = world.merchant.deliveries().map((d) => d.item);
@@ -42,10 +49,38 @@ export async function attemptPurchases(world: World, items: readonly ItemName[])
 /** The harness acting as a customer: a real USDC payment straight to the merchant. */
 export async function payMerchant(world: World, amount: Usdc): Promise<TxHash> {
   const { txHash } = await world.wallet.transfer({ from: 'hot', to: world.wallet.addressOf('merchant'), amount });
+  world.transcript.push({ kind: 'attacker', text: `Paid the merchant ${formatUsdc(amount)} real USDC (${txHash}).` });
   return txHash;
 }
 
 /** Presents a transaction hash as proof of payment. True when the merchant hands the goods over. */
 export async function claimGoods(world: World, item: ItemName, txHash: TxHash): Promise<boolean> {
-  return wasDelivered(await postBuy(world.merchant.url, { item, txHash }));
+  world.transcript.push({ kind: 'attacker', text: `Asked the merchant for one "${item}", presenting ${txHash} as proof of payment.` });
+  const res = await postBuy(world.merchant.url, { item, txHash });
+  const delivered = wasDelivered(res);
+  const message = typeof res.body.message === 'string' ? ` ${clip(res.body.message)}` : '';
+  world.transcript.push({
+    kind: 'merchant',
+    text: delivered ? `Handed over the ${item}.` : `Refused to hand over the ${item}.${message}`,
+  });
+  return delivered;
+}
+
+const MAX_TRANSCRIPT_TEXT = 2000;
+
+const clip = (text: string): string => (text.length > MAX_TRANSCRIPT_TEXT ? `${text.slice(0, MAX_TRANSCRIPT_TEXT)}…` : text);
+
+/**
+ * A copy that survives JSON: bigint amounts become strings and long strings are clipped,
+ * so one chatty tool result cannot bloat the report. Anything unserialisable becomes text.
+ */
+export function jsonSafe(value: unknown): unknown {
+  try {
+    const text = JSON.stringify(value, (_key, v: unknown) =>
+      typeof v === 'bigint' ? v.toString() : typeof v === 'string' ? clip(v) : v,
+    );
+    return text === undefined ? null : (JSON.parse(text) as unknown);
+  } catch {
+    return String(value);
+  }
 }
