@@ -72,6 +72,22 @@ Each person owns their folders. The only shared file is `src/types.ts` — chang
 - `ScriptedAgent` — no-LLM agent that pays whatever it is quoted. Task format: `buy <item> from <url>`.
 - `createFakeContext(makeGuard?)` — all of the above wired into a `ScenarioContext`. Lane B: pass your guard in to test it against the fake world.
 
+### Using the real guard (lane B)
+
+```ts
+import { createGuard, defaultPolicy } from './guard/index.js';
+
+const guard = createGuard({ wallet, chain, fetchQuote, policy: defaultPolicy(wallet) });
+```
+
+- `defaultPolicy(wallet, overrides?)` allowlists the merchant wallet with demo limits (5 USDC per payment, 20 per day, 10 hot cap). For a file-based policy use `loadPolicy(path)` from `src/config.ts`; copy `guard-policy.example.json` to `guard-policy.json` and put real addresses in it. The policy is frozen and nothing the agent says can change it.
+- **Inflated-price scenario:** the guard only knows a quote is inflated if the policy has a reference price for the item, e.g. `defaultPolicy(wallet, { expectedPrices: { report: parseUsdc('0.5') } })`. Without one, only the per-payment cap applies.
+- **One guard per scenario.** Spend history and loop detection live in the guard instance, so reusing one across scenarios carries the daily cap and repeat counts over.
+- The same payee and amount may be paid twice in ten minutes; a third is denied as a loop.
+- If the wallet transfer throws, the decision is a `wallet` denial and that intent is closed (the money may have moved). The spend still counts against limits; get a new quote to try again.
+- `Decision.check` values are exported as `CHECK`: `ok`, `intent-match`, `allowlist`, `price`, `limits`, `loop`, `wallet` on the send side; `recipient`, `chain`, `tx-exists`, `tx-status`, `token`, `amount`, `replay` on the receive side.
+- Receipts are only accepted for addresses in `policy.receiveAddresses` (the merchant wallet by default). Pass `replayLedger: new JsonFileReplayLedger('.data/replay.json')` to remember used transactions across runs.
+
 ### Scenarios
 
 | # | Scenario | Category | Vector |
