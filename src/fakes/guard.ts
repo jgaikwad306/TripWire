@@ -75,7 +75,8 @@ export class AllowAllGuard implements Guard {
     const done = (response: PaidResponse): PaidResponse => {
       this.log.push(response.decision);
       safeAppend(this.opts.audit, auditEntry(response.decision, context, 'off'));
-      return response;
+      const { kind: _kind, resource, ...terms } = context;
+      return { ...response, asked: { resource: resource ?? '(none)', ...terms } };
     };
     if (typeof parsed === 'string') return done({ decision: { allowed: false, check: 'request', reason: parsed } });
     const fetchImpl = this.opts.fetchImpl ?? fetch;

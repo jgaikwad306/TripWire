@@ -41,6 +41,7 @@ export function renderDashboard(token: string): string {
         <article class="metric"><div class="metric-label">Loss, USDC equivalent</div><div class="loss-pair"><div><span class="mini-label">Guarded</span><strong id="metric-loss-on">—</strong></div><div><span class="mini-label">Unguarded</span><strong id="metric-loss-off">—</strong></div></div><div class="metric-note" id="metric-loss-note">Finalized after outcome measurement</div></article>
         <article class="metric"><div class="metric-label">Honest purchases</div><div class="metric-value" id="metric-honest">0 <span>/ 2</span></div><div class="metric-note" id="metric-honest-note">Protection that keeps payments working</div></article>
       </div>
+      <p class="gateway-line" id="gateway-balances">Circle Gateway balances appear once a run starts.</p>
     </section>
     <section class="section" id="scenarios" aria-labelledby="attack-title">
       <div class="section-head"><span class="index">(2)</span><h2>Scenarios</h2><span class="aside">Each one, guarded and unguarded</span></div>

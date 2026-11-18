@@ -155,6 +155,8 @@ export interface PaidResponse {
   body?: unknown;
   /** Set when a payment was made (or may have been). */
   paid?: { amount: Usdc; payTo: Address; network: string; resource: string };
+  /** What the provider's 402 asked for, paid or not. Untrusted: as the provider stated it. */
+  asked?: { resource: string; payTo?: string; amountUsdc?: string; network?: string };
 }
 
 export interface Guard {

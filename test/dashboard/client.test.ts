@@ -50,7 +50,7 @@ describe('browser presentation', () => {
     expect(dom.get('comparison')!.innerHTML).toContain('Without Tripwire');
     expect(dom.get('comparison')!.innerHTML).toContain('Waiting to run');
     expect(dom.get('notice')!.textContent).toContain('XAI_API_KEY');
-    expect(dom.get('attack-title')!.textContent).toBe('Prompt injection');
+    expect(dom.get('attack-title')!.textContent).toBe('Prompt injection in paid data');
   });
 
   it('renders a full comparison with actual payloads, safe markup, and accurately labeled receive attacks', { timeout: 30_000 }, async () => {

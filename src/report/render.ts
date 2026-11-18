@@ -44,7 +44,7 @@ export function describeResult(r: ScenarioResult): string {
   if (r.error) return `error: ${r.error}`;
   const denial = r.decisions.find((d) => !d.allowed);
   if (r.stoppedBy === 'agent') return 'nothing lost: the agent declined, so the guard was not tested';
-  if (r.stoppedBy === 'not-settled') return 'nothing lost: the payment was signed as asked, but never settled';
+  if (r.stoppedBy === 'not-settled') return 'nothing lost: attempted as asked with no guard, but no payment went through';
   if (r.expected === 'blocked') return denial ? `blocked by ${denial.check}` : 'nothing lost';
   if (r.passed) return 'completed';
   return denial ? `not completed (denied by ${denial.check})` : 'not completed';

@@ -17,7 +17,7 @@ export type ExecutionEvent =
   | { type: 'transcript'; data: { entry: TranscriptEntry } }
   | { type: 'quote.recorded'; data: { intent: PaymentIntent } }
   | { type: 'operation.started'; data: { operationId: string; side: 'send' | 'receive' | 'api'; request: PaymentRequest | ReceiptObservation | PaidRequest } }
-  | { type: 'guard.decision'; data: { operationId: string; side: 'send' | 'receive' | 'api'; request: PaymentRequest | ReceiptObservation | PaidRequest; decision: Decision; paid?: { amount: string; payTo: string; network: string; resource: string }; status?: number } }
+  | { type: 'guard.decision'; data: { operationId: string; side: 'send' | 'receive' | 'api'; request: PaymentRequest | ReceiptObservation | PaidRequest; decision: Decision; paid?: { amount: string; payTo: string; network: string; resource: string }; asked?: { resource: string; payTo?: string; amountUsdc?: string; network?: string }; status?: number } }
   | { type: 'gateway.balances'; data: { hot: Usdc; merchant: Usdc; attacker: Usdc; when: 'start' | 'end' } }
   | { type: 'transfer.started' | 'transfer.confirmed' | 'transfer.failed'; data: { operationId: string; from: WalletRole; to: string; amount: Usdc; asset: 'USDC' | 'counterfeit'; txHash?: TxHash; error?: string } }
   | { type: 'settlement.started' | 'settlement.completed' | 'settlement.failed'; data: { operationId: string; from: string; to: string; amount: string; asset: 'USDC' | 'counterfeit'; txHash?: TxHash; error?: string } }
