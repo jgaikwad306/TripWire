@@ -208,6 +208,12 @@
     const actors = receive ? ['Attacker', 'Receipt', 'Guard', 'Delivery'] : honest ? ['Task', 'Agent', 'Guard', 'Merchant'] : ['Merchant', 'Agent', 'Guard', 'Wallet'];
     return `<article class="run-column ${guarded ? 'guarded' : 'baseline'}"><header class="column-heading"><span class="column-title">${icon(guarded ? 'shield' : 'code')}${guarded ? 'With Tripwire' : 'Without Tripwire'}</span><span class="column-tag ${state.events.length && !state.result ? 'active' : ''}">${h(tag)}</span></header><div class="flow" aria-label="${h(actors.join(' to '))}">${actors.map((actor, i) => `${i ? '<span class="flow-arrow" aria-hidden="true">→</span>' : ''}<span class="flow-node ${actor === 'Guard' ? 'guard-node' : ''} ${state.events.length && i === 0 ? 'observed' : ''}">${actor === 'Guard' && !guarded ? 'Bypassed' : actor}</span>`).join('')}</div><div class="story">${storyStep('01', honest ? 'Task & quote' : 'Attack payload', payload || placeholder(receive ? 'The submitted proof will appear here.' : 'The actual merchant content will appear here.'), Boolean(payload), 'payload', payload ? 'OBSERVED' : '')}${storyStep('02', receive ? 'Attacker’s claim' : 'Observed agent action', action || placeholder('Waiting for an action.'), Boolean(action))}${storyStep('03', guarded ? 'Guard response' : 'Unguarded response', response || placeholder('The actual verdict will appear here.'), Boolean(response))}${storyStep('04', 'Measured outcome', final || placeholder(state.events.length ? pending + ' · outcome pending' : waitingText), Boolean(final))}</div></article>`;
   }
+  function renderHero() {
+    const counts = {};
+    for (const id of queueIds()) { const c = catalog.find((s) => s.id === id)?.category; if (c) counts[c] = (counts[c] || 0) + 1; }
+    const labels = { send: 'Send attacks', receive: 'Receive attacks', hold: 'Hold attacks', honest: 'Honest controls' };
+    $('hero-categories').innerHTML = Object.keys(labels).filter((c) => counts[c]).map((c) => `<li>${labels[c]} <span class="count">(${counts[c]})</span></li>`).join('');
+  }
   function renderMetrics() {
     const states = [...rows.values()], results = states.filter((s) => s.result).map((s) => s.result), total = queueIds().length * 2;
     $('metric-progress').innerHTML = `${results.length} <span>/ ${total}</span>`;
@@ -293,7 +299,7 @@
     $('comparison').innerHTML = phases.map((p) => renderColumn(p, s)).join('');
     [...$('comparison').querySelectorAll('.agent-answer')].forEach((el, i) => { el.open = Boolean(openAnswers[i]); });
     if (focusedAnswer >= 0) document.querySelectorAll('.agent-answer summary')[focusedAnswer]?.focus({ preventScroll: true });
-    renderQueue(); renderMetrics(); renderEvidence(); renderDownloads();
+    renderQueue(); renderHero(); renderMetrics(); renderEvidence(); renderDownloads();
   }
   function formConfig() { return { network: $('network').value, agent: $('agent').value, scenarioIds: [...document.querySelectorAll('#scenario-options input:checked')].map((input) => input.value) }; }
   function updateReadiness() {
