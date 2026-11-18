@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { describe, expect, it } from 'vitest';
 import { RunManager } from '../../src/dashboard/manager.js';
+import { guardRules } from '../../src/dashboard/guard-rules.js';
 
 /** Execute the actual browser entrypoint against captured server events. The DOM stub
  * captures markup/text sinks; HTTP/SSE behavior is covered by live.test.ts. */
@@ -17,7 +18,7 @@ async function renderClient(config: unknown, snapshot: unknown, monitor: unknown
     document: { getElementById: element, querySelectorAll: () => [], querySelector: () => null },
     location: { search: '?token=test' }, URLSearchParams, CSS: { escape: (s: string) => s },
     requestAnimationFrame: (fn: () => void) => { queueMicrotask(fn); return 1; },
-    fetch: async (url: string) => ({ ok: true, json: async () => url.startsWith('/api/config') ? config : url.startsWith('/api/streams') ? monitor : snapshot }),
+    fetch: async (url: string) => ({ ok: true, json: async () => url.startsWith('/api/config') ? config : url.startsWith('/api/streams') ? monitor : url.startsWith('/api/guard') ? guardRules('fake') : snapshot }),
     setInterval: () => 1,
     EventSource: class { addEventListener() {} close() {} },
     ...globals,
@@ -69,6 +70,43 @@ describe('background ledger', () => {
     expect(dom.get('ledger-far')!.style.transform).toBe('translate3d(0, 0px, 0)');
     expect(dom.get('ledger-near')!.style.transform).toBe('translate3d(0px, 0, 0)');
     expect(dom.get('hero-chain')!.style.transform).toBe('translate3d(0, 0px, 0)');
+  });
+});
+
+describe('how the guard works', () => {
+  it('counts each attack the guard blocked under the rule that stopped it, and links the panel tag to that rule', { timeout: 30_000 }, async () => {
+    // Arrange: a full fake comparison. Paid-API attacks: two stopped by resource, two by duplicate, one each by others.
+    const manager = new RunManager({ env: {}, outDir: mkdtempSync(join(tmpdir(), 'tripwire-guard-')) });
+    const completed = new Promise<void>((resolve) => manager.subscribe((event) => { if (event.type === 'run.completed') resolve(); }));
+    manager.start({ network: 'fake', agent: 'naive', scenarioIds: manager.config().scenarios.map((s) => s.id) });
+    await completed;
+    const snapshot = JSON.parse(JSON.stringify(manager.snapshot(), (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value));
+    // Select a paid-API attack (counts still come from every recorded result).
+    snapshot.run.queue = ['api-prompt-injection'];
+
+    // Act
+    const dom = await renderClient(manager.config(), snapshot);
+
+    // Assert: counts per rule, blank where nothing was blocked.
+    const count = (check: string) => dom.get(`rule-count-${check}`)!.textContent;
+    expect(count('resource')).toBe('blocked 2');
+    expect(count('duplicate')).toBe('blocked 2');
+    for (const check of ['intent-match', 'network', 'allowlist', 'price', 'budget']) expect(count(check)).toBe('blocked 1');
+    for (const check of ['token', 'limits', 'rate-limit']) expect(count(check)).toBe('');
+    // The selected paid-API attack's guard tag links to its rule; the unguarded column has none.
+    const html = dom.get('comparison')!.innerHTML;
+    expect(html.match(/<a class="check-tag rule-link" href="#rule-resource" data-rule="resource">resource<\/a>/g)).toHaveLength(1);
+  });
+
+  it('renders every rule in order with its policy value', async () => {
+    const manager = new RunManager({ env: {} });
+
+    const dom = await renderClient(manager.config(), manager.snapshot());
+
+    const list = dom.get('guard-rules')!.innerHTML;
+    const order = [...list.matchAll(/<li class="guard-rule" id="rule-([a-z-]+)"/g)].map((m) => m[1]);
+    expect(order).toEqual(guardRules('fake').rules.map((r) => r.check));
+    expect(list).toContain('market-data 0.001 · news-sentiment 0.002 · compute 0.005 USDC, up to 5% over');
   });
 });
 

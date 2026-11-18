@@ -53,7 +53,7 @@ export function renderDashboard(token: string): string {
 </defs></svg>
 <header class="site-header">
   <a class="wordmark" href="#top">Tripwire<sup>®</sup></a>
-  <nav class="site-nav" aria-label="Sections"><a href="#scenarios">Scenarios <span class="count">(<span id="queue-count">04</span>)</span></a><a href="#evidence-section">Evidence</a><a href="#summary">Summary</a></nav>
+  <nav class="site-nav" aria-label="Sections"><a href="#guard">Guard</a><a href="#scenarios">Scenarios <span class="count">(<span id="queue-count">04</span>)</span></a><a href="#evidence-section">Evidence</a><a href="#summary">Summary</a></nav>
   <div class="header-status"><span class="setup"><strong id="sidebar-network">Arc Testnet</strong> / <span id="sidebar-agent">Grok agent</span></span><span class="connection"><span class="dot" id="connection-dot"></span><span id="connection">Connecting</span></span></div>
 </header>
 <section class="hero" id="top" aria-labelledby="hero-title">
@@ -68,9 +68,18 @@ export function renderDashboard(token: string): string {
 </section>
 <main>
     <div id="notice" class="notice" role="status" hidden></div>
-    <section id="streams-monitor" class="section" aria-label="Wallet monitoring" hidden>${TRIPWIRE}<div class="section-head"><span class="index">(0)</span><h2>Wallet monitoring</h2><span class="aside" id="streams-state" role="status"></span></div><p id="streams-coverage"></p><div id="streams-details"></div></section>
+    <section class="section guard-section" id="guard" aria-labelledby="guard-title">
+      ${TRIPWIRE}<div class="section-head"><span class="index">(0)</span><h2 id="guard-title">How the guard works</h2><span class="aside">Checked in order. The first rule that fails refuses.</span></div>
+      <div class="guard-intro">
+        <p class="guard-principle">The agent never holds a key. It asks the guard to pay, and the guard decides.</p>
+        <p class="flow guard-flow"><span class="flow-node observed">Agent</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node guard-node">Guard checks the rules</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node observed">Signs or refuses</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node observed">Paid API / Circle Gateway</span></p>
+      </div>
+      <ol class="guard-rules" id="guard-rules" aria-label="Rules the guard checks before paying an API, in order"></ol>
+      <p class="guard-monitor">If money leaves the wallet without going through the guard, the <a id="monitor-link" href="#streams-monitor">Streams monitor freezes spending</a>.</p>
+    </section>
+    <section id="streams-monitor" class="section" aria-label="Wallet monitoring" hidden>${TRIPWIRE}<div class="section-head"><span class="index">(1)</span><h2>Wallet monitoring</h2><span class="aside" id="streams-state" role="status"></span></div><p id="streams-coverage"></p><div id="streams-details"></div></section>
     <section class="section" id="summary" aria-labelledby="summary-title">
-      ${TRIPWIRE}<div class="section-head"><span class="index">(1)</span><h2 id="summary-title">Run summary</h2><span class="aside">Two passes. Same attacks.</span></div>
+      ${TRIPWIRE}<div class="section-head"><span class="index">(2)</span><h2 id="summary-title">Run summary</h2><span class="aside">Two passes. Same attacks.</span></div>
       <div class="metrics">
         <article class="metric"><div class="metric-label">Scenarios completed</div><div class="metric-value" id="metric-progress">0 <span>/ 8</span></div><div class="metric-track"><span id="progress-bar"></span></div><div class="metric-note" id="metric-progress-note">Two passes. Same attack scenarios.</div></article>
         <article class="metric"><div class="metric-label">Guard interventions</div><div class="metric-value" id="metric-guards">0</div><div class="metric-note">Observed payment or receipt denials</div></article>
@@ -80,7 +89,7 @@ export function renderDashboard(token: string): string {
       <p class="gateway-line" id="gateway-balances">Circle Gateway balances appear once a run starts.</p>
     </section>
     <section class="section" id="scenarios" aria-labelledby="attack-title">
-      ${TRIPWIRE}<div class="section-head"><span class="index">(2)</span><h2>Scenarios</h2><span class="aside">Each one, guarded and unguarded</span></div>
+      ${TRIPWIRE}<div class="section-head"><span class="index">(3)</span><h2>Scenarios</h2><span class="aside">Each one, guarded and unguarded</span></div>
       <div class="lab">
         <div class="index"><div class="index-head"><span>Index</span><span>No. / Title / Category</span></div><nav id="queue" aria-label="Scenario queue"></nav><button class="button secondary compact add-scenarios" id="choose-scenarios">Choose scenarios</button></div>
         <div class="investigation">
@@ -91,7 +100,7 @@ export function renderDashboard(token: string): string {
         </div>
       </div>
     </section>
-    <section class="section" id="evidence-section" aria-labelledby="evidence-title">${TRIPWIRE}<div class="section-head"><span class="index">(3)</span><h2 id="evidence-title">Under the hood</h2><span class="aside">Observed events (<span id="evidence-count">00</span>)</span></div><div id="evidence"></div></section>
+    <section class="section" id="evidence-section" aria-labelledby="evidence-title">${TRIPWIRE}<div class="section-head"><span class="index">(4)</span><h2 id="evidence-title">Under the hood</h2><span class="aside">Observed events (<span id="evidence-count">00</span>)</span></div><div id="evidence"></div></section>
     <section id="downloads" class="section downloads" hidden></section>
     <footer class="page-footer"><span><strong>Tripwire®</strong> The agent asks. The guard decides.</span><span id="footer-network">Arc Testnet · Testnet USDC</span></footer>
 </main>
