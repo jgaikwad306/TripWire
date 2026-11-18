@@ -452,3 +452,27 @@ dialog[open]{animation:dialog-in .6s var(--ease)}
   .guard-flow .flow-arrow{transform:rotate(90deg)}
   .guard-rules{grid-template-columns:1fr;grid-template-rows:none;grid-auto-flow:row}
 }
+
+/* ==========================================================================
+   View tabs: the attack lab and How the guard works. A pill pair in the
+   header, black for the selected view; on phones it takes its own row.
+   ========================================================================== */
+.header-center{display:flex;align-items:center;gap:var(--gap-6);min-width:0}
+.view-tabs{display:flex;gap:var(--gap-1);padding:.1875rem;border:var(--border) solid var(--line);border-radius:var(--radius-pill)}
+.view-tab{border:0;background:none;border-radius:var(--radius-pill);padding:.5em 1em;font:inherit;font-size:var(--text-body);line-height:1;color:var(--muted);cursor:pointer;white-space:nowrap;transition:background-color .3s var(--ease),color .3s var(--ease)}
+.view-tab:hover{color:var(--text)}
+.view-tab[aria-selected="true"]{background:var(--black);color:var(--white)}
+.view-tab:focus-visible{outline:.125rem solid var(--signal);outline-offset:.125rem}
+/* The hero sits in the lab panel inside <main>: undo main's side padding so it stays full width. */
+.view-panel>.hero{margin-inline:calc(var(--margin) * -1)}
+@media(max-width:760px){
+  .header-center{grid-column:1 / -1;grid-row:2;justify-content:center}
+}
+/* Give the middle of the header the spare width (the wordmark column needs little), and shed
+   the least important header text as the window narrows. The tabs always stay. */
+@media(min-width:761px){
+  .site-header{grid-template-columns:auto minmax(0,1fr) auto}
+  .header-center{justify-self:center}
+}
+@media(max-width:1200px){.header-status .setup{display:none}}
+@media(max-width:960px){.header-center .site-nav{display:none}}

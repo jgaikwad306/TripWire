@@ -245,9 +245,35 @@
       if (el) el.textContent = counts[rule.check] ? `blocked ${counts[rule.check]}` : '';
     }
   }
+  // Views: the attack lab and How the guard works are tabs. The URL hash picks one, so a refresh,
+  // a shared link and the Back button all land on the right tab.
+  const VIEWS = ['lab', 'guard'];
+  const viewFor = (hash) => (hash === '#guard' || String(hash).startsWith('#rule-') ? 'guard' : 'lab');
+  let currentView;
+  function showView(view) {
+    currentView = view;
+    for (const name of VIEWS) {
+      const selected = name === view;
+      $('panel-' + name).hidden = !selected;
+      $('tab-' + name).ariaSelected = String(selected);
+      $('tab-' + name).tabIndex = selected ? 0 : -1;
+    }
+    $('section-nav').hidden = view !== 'lab';
+  }
+  // A user's choice of tab is a history entry; landing on a target within the tab scrolls to it.
+  function selectView(view, { focusTab = false } = {}) {
+    if (view !== currentView) {
+      history.pushState(null, '', view === 'guard' ? '#guard' : location.pathname + location.search);
+      showView(view);
+      window.scrollTo(0, 0);
+    }
+    if (focusTab) $('tab-' + view).focus();
+  }
+  showView(viewFor(location.hash));
   function focusRule(check) {
     const row = $('rule-' + check);
     if (!row) return;
+    if (currentView !== 'guard') { history.pushState(null, '', '#guard'); showView('guard'); }
     const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     row.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'center' });
     row.focus({ preventScroll: true });
@@ -453,6 +479,23 @@
     event.preventDefault(); const draft = formConfig();
     if (!draft.scenarioIds.length) { $('readiness').textContent = 'Select at least one scenario.'; $('readiness').className = 'readiness missing'; return; }
     settings = draft; source?.close(); run = null; rows = new Map(); sequence = 0; following = true; apiError = ''; lastEvidence = ''; $('settings').close(); schedule();
+  });
+  VIEWS.forEach((view) => $('tab-' + view).addEventListener('click', () => selectView(view)));
+  // Tab keyboard pattern: arrows move between tabs (and select them), Home and End jump.
+  $('tab-lab').parentElement?.addEventListener('keydown', (event) => {
+    const keys = { ArrowLeft: -1, ArrowRight: 1, Home: -VIEWS.length, End: VIEWS.length };
+    if (!(event.key in keys)) return;
+    event.preventDefault();
+    const next = Math.max(0, Math.min(VIEWS.length - 1, VIEWS.indexOf(currentView) + keys[event.key]));
+    selectView(VIEWS[next], { focusTab: true });
+  });
+  // A link to a section on the other tab (or Back/Forward): switch, then scroll to the target,
+  // which the browser could not do while its tab was hidden.
+  if (typeof window !== 'undefined') window.addEventListener('hashchange', () => {
+    showView(viewFor(location.hash));
+    const target = location.hash.length > 1 ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+    if (target && !location.hash.startsWith('#rule-')) target.scrollIntoView();
+    else if (!target) window.scrollTo(0, 0);
   });
   $('comparison').addEventListener('click', (event) => {
     const link = event.target.closest('.rule-link');
