@@ -79,7 +79,7 @@ h1{font-size:30px;font-weight:620;line-height:1.22;letter-spacing:-1.05px;margin
 .compact{padding:6px 9px;font-size:10px;min-height:30px}
 .notice{border:1px solid #635033;background:#241f17;color:var(--amber);border-radius:7px;padding:12px 15px;margin-bottom:20px;font-size:12px;overflow-wrap:anywhere}
 .metrics{display:grid;grid-template-columns:1fr 1fr 1.25fr 1fr;gap:13px;margin-bottom:26px}
-.metric{padding:17px 18px 14px;border:1px solid var(--line);border-radius:8px;background:linear-gradient(135deg,#141c28,#101722);min-width:0}
+.metric{padding:17px 18px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel);min-width:0}
 .metric-label{color:#9cabc0;font-size:10px;font-weight:500;display:flex;justify-content:space-between;gap:10px}
 .metric-label svg{color:#596b85;width:15px;height:15px}
 .metric-value{font-size:30px;line-height:1.25;letter-spacing:-.8px;font-weight:560;margin-top:12px}
