@@ -481,8 +481,10 @@ class GuardedWallet implements Guard {
       outcome = { response: { decision: deny(CHECK.monitoring, err.message) }, context: { kind: 'api', resource: String(req?.url) } };
     }
     // A request that asked for no payment is not a payment decision.
-    if (outcome.context) this.record(outcome.response.decision, outcome.context);
-    return outcome.response;
+    if (!outcome.context) return outcome.response;
+    this.record(outcome.response.decision, outcome.context);
+    const { kind: _kind, resource, ...terms } = outcome.context;
+    return { ...outcome.response, asked: { resource: resource ?? String(req?.url), ...terms } };
   }
 
   /**

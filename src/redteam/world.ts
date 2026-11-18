@@ -82,6 +82,8 @@ const DAILY_CAP_IN_DATASETS = 10n;
 /** Everything one scenario runs against. A fresh one is built for every scenario. */
 export interface World extends ScenarioContext {
   network: Network;
+  /** false for the unguarded baseline. */
+  guarded: boolean;
   merchant: MockMerchant;
   prices: Prices;
   /** How long to wait for a transaction to become visible on the chain reader. 0 offline. */
@@ -372,6 +374,7 @@ async function assembleWorld(base: WorldBase, opts: WorldOptions, overrides: Wor
   }
   return {
     ...base,
+    guarded: opts.guarded,
     facilitator,
     wallet,
     guard,
@@ -404,7 +407,8 @@ async function emitGatewayBalances(gateway: GatewayReader, wallet: WalletProvide
   if (!onEvent) return;
   try {
     const [hot, merchant, attacker] = await Promise.all(
-      (['hot', 'merchant', 'attacker'] as const).map((role) => gateway.balance(wallet.addressOf(role))),
+      // Including what Gateway has accepted but not yet batched onchain: that is where a nanopayment shows first.
+      (['hot', 'merchant', 'attacker'] as const).map((role) => gateway.balanceDetail(wallet.addressOf(role)).then((b) => b.available + b.pending)),
     );
     emit(onEvent, { type: 'gateway.balances', data: { hot: hot!, merchant: merchant!, attacker: attacker!, when } });
   } catch {
@@ -460,6 +464,7 @@ function watchRequests(inner: Guard, onEvent?: EventSink): { guard: Guard; offQu
           decision: response.decision,
           ...(response.status !== undefined ? { status: response.status } : {}),
           ...(response.paid ? { paid: { ...response.paid, amount: response.paid.amount.toString() } } : {}),
+          ...(response.asked ? { asked: response.asked } : {}),
         },
       });
       return response;

@@ -351,3 +351,6 @@ dialog[open]{animation:dialog-in .6s var(--ease)}
   .reveal>span{transform:none}
   .fade-in{opacity:1}
 }
+
+/* Circle Gateway balances under the run summary */
+.gateway-line{margin-top:var(--gap-5);padding-top:var(--gap-3);border-top:var(--border) solid var(--hairline);color:var(--muted);font-size:var(--text-body);font-variant-numeric:tabular-nums}

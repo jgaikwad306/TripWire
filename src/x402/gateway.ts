@@ -83,8 +83,10 @@ export const transferCounts = (transfer: GatewayTransfer): boolean => transfer.s
 
 /** Read-only view of Gateway: balances and the transfers it has accepted. */
 export interface GatewayReader {
-  /** USDC deposited in Gateway by this address on Arc, in base units. */
+  /** USDC this address can spend from Gateway on Arc, in base units. */
   balance(address: Address): Promise<Usdc>;
+  /** Spendable balance, plus incoming nanopayments Gateway has accepted but not yet batched onchain. */
+  balanceDetail(address: Address): Promise<{ available: Usdc; pending: Usdc }>;
   /** The transfer made with this payer's authorization nonce, if Gateway has it. */
   transferByNonce(from: Address, nonce: `0x${string}`): Promise<GatewayTransfer | undefined>;
   /** Transfers matching the filter, oldest first. */
@@ -122,16 +124,20 @@ export class HttpGatewayReader implements GatewayReader {
   ) {}
 
   async balance(address: Address): Promise<Usdc> {
+    return (await this.balanceDetail(address)).available;
+  }
+
+  async balanceDetail(address: Address): Promise<{ available: Usdc; pending: Usdc }> {
     const res = await this.fetchImpl(`${this.baseUrl}/v1/balances`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ token: 'USDC', sources: [{ domain: GATEWAY_DOMAIN, depositor: address }] }),
       signal: AbortSignal.timeout(15_000),
     });
-    const body = (await res.json().catch(() => undefined)) as { balances?: { domain: number; balance: string }[] } | undefined;
+    const body = (await res.json().catch(() => undefined)) as { balances?: { domain: number; balance: string; pendingBatch?: string }[] } | undefined;
     if (!res.ok || !body?.balances) throw new Error(`Gateway balances failed (${res.status}).`);
     const entry = body.balances.find((b) => b.domain === GATEWAY_DOMAIN);
-    return entry ? parseUsdc(entry.balance) : 0n;
+    return { available: entry ? parseUsdc(entry.balance) : 0n, pending: entry?.pendingBatch ? parseUsdc(entry.pendingBatch) : 0n };
   }
 
   async transferByNonce(from: Address, nonce: `0x${string}`): Promise<GatewayTransfer | undefined> {
@@ -210,6 +216,11 @@ export class FakeGateway implements Facilitator, GatewayReader {
 
   async balance(address: Address): Promise<Usdc> {
     return this.balances.get(address.toLowerCase() as Address) ?? 0n;
+  }
+
+  /** Offline settlement is instant, so nothing is ever pending. */
+  async balanceDetail(address: Address): Promise<{ available: Usdc; pending: Usdc }> {
+    return { available: await this.balance(address), pending: 0n };
   }
 
   async transferByNonce(from: Address, nonce: `0x${string}`): Promise<GatewayTransfer | undefined> {
