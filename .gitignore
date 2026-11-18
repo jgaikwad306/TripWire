@@ -10,3 +10,6 @@ dist/
 coverage/
 recovery_file_*.dat
 results/audit.jsonl
+
+# Your own agents (agents.example.json is the template)
+agents.json

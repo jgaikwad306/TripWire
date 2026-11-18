@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { ExecutionEvent } from '../events.js';
-import { runOnce, createAgent, AGENT_KINDS } from '../redteam/service.js';
+import { runOnce } from '../redteam/service.js';
+import { agentChoices, agentSecretEnv, createAgent, loadAgentRegistry, type AgentChoice, type AgentRegistry } from '../agent/registry.js';
 import { executionOrder } from '../redteam/runner.js';
 import { ALL_SCENARIOS } from '../redteam/scenarios/index.js';
 import { jsonSafe } from '../redteam/scenarios/helpers.js';
@@ -17,7 +18,8 @@ const MAX_REPLAY_GAP_MS = 2_000;
 export const runConfigSchema = z.object({
   scenarioIds: z.array(z.string()).min(1).max(ALL_SCENARIOS.length).refine((ids) => new Set(ids).size === ids.length, 'Select each scenario once.'),
   network: z.enum(['arc-testnet', 'fake']),
-  agent: z.enum(AGENT_KINDS),
+  /** A built-in agent or one from agents.json; checked against the registry when a run starts. */
+  agent: z.string().min(1).max(64),
 });
 export type RunConfig = z.infer<typeof runConfigSchema>;
 export type Phase = 'guarded' | 'unguarded';
@@ -48,9 +50,8 @@ export class DashboardError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }
 
-export function missingConfiguration(config: RunConfig, env: NodeJS.ProcessEnv): string[] {
-  const keys: string[] = [];
-  if (config.agent !== 'naive') keys.push('XAI_API_KEY', 'XAI_MODEL');
+export function missingConfiguration(config: RunConfig, env: NodeJS.ProcessEnv, agents: AgentChoice[] = agentChoices({ specs: [] })): string[] {
+  const keys: string[] = [...(agents.find((a) => a.id === config.agent)?.requiredEnv ?? [])];
   if (config.network === 'arc-testnet') {
     keys.push('CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'WALLET_ID_HOT', 'WALLET_ID_VAULT', 'WALLET_ID_MERCHANT', 'ATTACKER_PRIVATE_KEY');
     if (config.scenarioIds.includes('counterfeit-usdc')) keys.push('FAKE_USDC_ADDRESS');
@@ -66,6 +67,8 @@ export class RunManager {
   private listeners = new Set<(event: LiveEvent) => void>();
   readonly env: NodeJS.ProcessEnv;
   readonly outDir: string;
+  readonly registry: AgentRegistry;
+  readonly agents: AgentChoice[];
 
   constructor(private readonly options: {
     env?: NodeJS.ProcessEnv;
@@ -76,9 +79,14 @@ export class RunManager {
     replay?: { journal: RunJournal; speed?: number };
     /** Save a recording of each finished run (default true outside replay). */
     record?: boolean;
+    /** Custom agents. Defaults to agents.json (or TRIPWIRE_AGENTS_FILE). */
+    registry?: AgentRegistry;
   } = {}) {
     this.env = options.env ?? process.env;
     this.outDir = options.outDir ?? DEFAULT_REPORT_DIR;
+    // A replay executes nothing, so a broken agents file must not stop it.
+    this.registry = options.registry ?? (options.replay ? safeRegistry(this.env) : loadAgentRegistry(this.env));
+    this.agents = agentChoices(this.registry);
   }
 
   config() {
@@ -87,8 +95,9 @@ export class RunManager {
     // Only readiness booleans/names cross the boundary, never environment values.
     // A replay needs no keys: it executes nothing.
     const replaying = Boolean(this.options.replay);
-    return { defaults, scenarios: scenarioCatalog(), agents: AGENT_KINDS, model: this.env.XAI_MODEL ?? null, streamsEnabled: !replaying && streamsEnabled(this.env), replay: replaying,
-      configured: Object.fromEntries(['XAI_API_KEY', 'XAI_MODEL', 'CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'WALLET_ID_HOT', 'WALLET_ID_VAULT', 'WALLET_ID_MERCHANT', 'ATTACKER_PRIVATE_KEY', 'FAKE_USDC_ADDRESS'].map((key) => [key, replaying || Boolean(this.env[key])])) };
+    const keys = new Set(['XAI_API_KEY', 'XAI_MODEL', 'CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'WALLET_ID_HOT', 'WALLET_ID_VAULT', 'WALLET_ID_MERCHANT', 'ATTACKER_PRIVATE_KEY', 'FAKE_USDC_ADDRESS', ...this.agents.flatMap((a) => a.requiredEnv)]);
+    return { defaults, scenarios: scenarioCatalog(), agents: this.agents, model: this.env.XAI_MODEL ?? null, streamsEnabled: !replaying && streamsEnabled(this.env), replay: replaying,
+      configured: Object.fromEntries([...keys].map((key) => [key, replaying || Boolean(this.env[key])])) };
   }
 
   snapshot() { return { run: this.run ?? null }; }
@@ -104,7 +113,8 @@ export class RunManager {
     if (!parsed.success) throw new DashboardError(parsed.error.issues.map((i) => i.message).join(' '));
     const config = parsed.data;
     if (config.scenarioIds.some((id) => !ALL_SCENARIOS.some((s) => s.id === id))) throw new DashboardError('Unknown scenario selected.');
-    const missing = missingConfiguration(config, this.env);
+    if (!this.agents.some((a) => a.id === config.agent)) throw new DashboardError(`Unknown agent "${config.agent}".`);
+    const missing = missingConfiguration(config, this.env, this.agents);
     if (missing.length) throw new DashboardError(`Configure ${missing.join(', ')} in .env, then restart the dashboard.`, 422);
     const scenarios = executionOrder(ALL_SCENARIOS.filter((s) => config.scenarioIds.includes(s.id)));
     this.stopping = false;
@@ -160,7 +170,8 @@ export class RunManager {
   private publish(type: LiveEvent['type'], data: unknown, phase?: Phase, scenarioId?: string): void {
     const run = this.run!;
     // Tool replies may contain attacker text. Copy and redact before retaining/broadcasting.
-    const secrets = Object.entries(this.env).filter(([key, value]) => /API_KEY|SECRET|PRIVATE_KEY/.test(key) && value).map(([, value]) => value!);
+    const agentSecrets = new Set(agentSecretEnv(this.registry));
+    const secrets = Object.entries(this.env).filter(([key, value]) => (/API_KEY|SECRET|PRIVATE_KEY/.test(key) || agentSecrets.has(key)) && value).map(([, value]) => value!);
     const safe = JSON.parse(JSON.stringify(jsonSafe(data), (_key, value: unknown) => {
       if (typeof value !== 'string') return value;
       return secrets.reduce((text, secret) => text.split(secret).join('[redacted]'), value);
@@ -173,7 +184,7 @@ export class RunManager {
   private async execute(run: LiveRun): Promise<void> {
     this.publish('run.started', { queue: run.queue });
     try {
-      const agent = createAgent(run.config.agent, this.env);
+      const agent = await createAgent(run.config.agent, this.env, this.registry);
       for (const phase of ['guarded', 'unguarded'] as const) {
         if (this.stopping) break;
         run.phase = phase;
@@ -213,4 +224,8 @@ export class RunManager {
       catch { /* A recording is a convenience; the run itself is done. */ }
     }
   }
+}
+
+function safeRegistry(env: NodeJS.ProcessEnv): AgentRegistry {
+  try { return loadAgentRegistry(env); } catch { return { specs: [] }; }
 }

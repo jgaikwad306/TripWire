@@ -131,9 +131,11 @@
       api('/api/state').then((snapshot) => { if (snapshot.run?.id !== id) hydrate(snapshot); }).catch(() => {});
     };
   }
+  function agentChoice(id) { return (capabilities?.agents || []).find((a) => a.id === id); }
+  function agentLabel(id) { return id === 'naive' ? 'Scripted agent' : id === 'grok' ? 'Grok agent' : agentChoice(id)?.label ?? id; }
   function readiness(config) {
     const required = [];
-    if (config.agent !== 'naive') required.push('XAI_API_KEY', 'XAI_MODEL');
+    required.push(...(agentChoice(config.agent)?.requiredEnv ?? []));
     if (config.network === 'arc-testnet') { required.push('CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'WALLET_ID_HOT', 'WALLET_ID_VAULT', 'WALLET_ID_MERCHANT', 'ATTACKER_PRIVATE_KEY'); if (config.scenarioIds.includes('counterfeit-usdc')) required.push('FAKE_USDC_ADDRESS'); }
     return required.filter((name) => !capabilities.configured[name]);
   }
@@ -304,12 +306,12 @@
     if (!ids.includes(selected)) selected = ['api-prompt-injection', 'prompt-injection'].find((id) => ids.includes(id)) ?? ids[0];
     const s = meta(), active = isRunning(), config = run?.config || settings, missing = readiness(settings);
     $('sidebar-network').textContent = config.network === 'fake' ? 'Simulated ledger' : 'Arc Testnet';
-    $('sidebar-agent').textContent = config.agent === 'naive' ? 'Scripted agent' : config.agent === 'grok-careful' ? 'Grok · careful prompt' : 'Grok agent';
+    $('sidebar-agent').textContent = agentLabel(config.agent);
     $('footer-network').textContent = config.network === 'fake' ? 'Offline · No real funds moved' : 'Arc Testnet · Testnet USDC';
     $('start').hidden = Boolean(active); $('stop').hidden = !active; $('stop').disabled = run?.status === 'stopping';
     $('stop').textContent = run?.status === 'stopping' ? 'Finishing current scenario…' : 'Stop after scenario';
     $('start').disabled = Boolean(missing.length); $('configure').disabled = Boolean(active); $('choose-scenarios').disabled = Boolean(active);
-    const setupLabel = (settings.network === 'arc-testnet' ? 'Arc Testnet' : 'Offline ledger') + ' + ' + (settings.agent === 'naive' ? 'scripted agent' : 'Grok');
+    const setupLabel = (settings.network === 'arc-testnet' ? 'Arc Testnet' : 'Offline ledger') + ' + ' + agentLabel(settings.agent);
     const notice = apiError || run?.error || run?.warning || (!run && missing.length ? `${setupLabel} is selected. Configure ${missing.join(', ')} in .env, then restart; or choose another mode in Configure.` : '');
     $('notice').hidden = !notice; $('notice').textContent = notice;
     $('category').textContent = s.category === 'honest' ? 'HONEST CONTROL' : s.category === 'api' ? 'PAID API ATTACK' : s.category.toUpperCase() + ' ATTACK'; $('category').className = 'pill' + (s.category === 'honest' ? ' honest' : '');
@@ -360,6 +362,8 @@
   });
   Promise.all([api('/api/config'), api('/api/state')]).then(([config, snapshot]) => {
     capabilities = config; catalog = config.scenarios; settings = config.defaults;
+    // Built-in agents and the ones registered in agents.json.
+    $('agent').innerHTML = config.agents.map((a) => `<option value="${h(a.id)}">${h(a.label)}</option>`).join('');
     $('connection').textContent = 'Connected'; $('connection-dot').style.background = 'var(--teal)'; hydrate(snapshot);
     if (config.streamsEnabled) {
       const nativeUnits = (raw) => { const n = BigInt(raw); return (n / 10n ** 18n).toString() + (n % 10n ** 18n ? '.' + (n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '') : ''); };

@@ -1,4 +1,3 @@
-import { CAREFUL_SYSTEM_PROMPT, GrokAgent, createXaiClient } from '../agent/grok.js';
 import { ARC_TESTNET, formatUsdc } from '../constants.js';
 import { saveHtmlReport } from '../report/html.js';
 import { describeResult, renderMarkdown, renderTerminal } from '../report/render.js';
@@ -7,24 +6,13 @@ import type { Address, Agent } from '../types.js';
 import type { AuditLog } from '../guard/audit.js';
 import { createArcClient } from '../chain/arc.js';
 import type { CommandIo } from './commands.js';
-import { NaiveAgent } from './naive-agent.js';
 import { runScenarios, type RunObserver } from './runner.js';
 import type { RedTeamScenario } from './scenarios/index.js';
 import { buildReport } from './score.js';
 import { fakeWorldFactory, liveWorldFactory, runPolicy, type World, type WorldFactory, type WorldOptions, type FacilitatorChoice } from './world.js';
 
-export const AGENT_KINDS = ['naive', 'grok', 'grok-careful'] as const;
-export type AgentKind = (typeof AGENT_KINDS)[number];
-
-export function createAgent(requested: string | undefined, env: NodeJS.ProcessEnv): Agent {
-  const kind = requested ?? (env.XAI_API_KEY && env.XAI_MODEL ? 'grok' : 'naive');
-  if (!AGENT_KINDS.includes(kind as AgentKind)) {
-    throw new Error(`Unknown agent "${kind}". Choose one of: ${AGENT_KINDS.join(', ')}`);
-  }
-  if (kind === 'naive') return new NaiveAgent();
-  if (kind === 'grok') return new GrokAgent({ model: env.XAI_MODEL, client: createXaiClient(env.XAI_API_KEY) });
-  return new GrokAgent({ model: env.XAI_MODEL, client: createXaiClient(env.XAI_API_KEY), systemPrompt: CAREFUL_SYSTEM_PROMPT, name: `grok-careful:${env.XAI_MODEL ?? ''}` });
-}
+/** Agents are built by the registry, which also knows the ones users register themselves. */
+export { BUILTIN_AGENTS as AGENT_KINDS, createAgent } from '../agent/registry.js';
 
 /** A full run spends a few datasets' worth from the hot wallet (honest buys plus customer payments). */
 const HOT_BALANCE_NEEDED_IN_DATASETS = 3n;

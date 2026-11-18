@@ -1,3 +1,4 @@
+import { agentSecretEnv } from '../agent/registry.js';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -22,11 +23,16 @@ export async function startDashboard(options: {
   replay?: { journal: RunJournal; speed?: number };
 } = {}): Promise<DashboardServer> {
   const manager = options.manager ?? new RunManager(options);
+  const defaultAgent = options.defaults?.agent;
+  if (!options.replay && defaultAgent && !manager.agents.some((a) => a.id === defaultAgent)) {
+    throw new Error(`Unknown agent "${defaultAgent}". Choose one of: ${manager.agents.map((a) => a.id).join(', ')}`);
+  }
   const token = randomBytes(24).toString('base64url');
   const streams = new Set<ServerResponse>();
   let allowedHosts: string[] = [];
   let closing = false;
-  const secrets = Object.entries(manager.env).filter(([key, value]) => /API_KEY|SECRET|PRIVATE_KEY/.test(key) && value).map(([, value]) => value!);
+  const agentSecrets = new Set(agentSecretEnv(manager.registry));
+  const secrets = Object.entries(manager.env).filter(([key, value]) => (/API_KEY|SECRET|PRIVATE_KEY/.test(key) || agentSecrets.has(key)) && value).map(([, value]) => value!);
   const redact = (text: string) => secrets.reduce((s, value) => s.split(value).join('[redacted]'), text);
   const json = (data: unknown): string => redact(JSON.stringify(data, (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value));
   const headers = {
@@ -161,10 +167,9 @@ export async function dashboardCommand(args: string[]): Promise<void> {
     fake: { type: 'boolean', default: false }, agent: { type: 'string' }, help: { type: 'boolean', default: false },
     replay: { type: 'boolean', default: false }, speed: { type: 'string', default: '1' },
   } });
-  if (values.help) { console.log('Usage: npm run cli dashboard -- [--port 3000] [--out reports] [--fake] [--agent naive|grok|grok-careful]\n       npm run demo:replay -- [recording.journal.json] [--speed 2]\nDefaults: Arc Testnet + Grok. Runs start from the browser. Every finished run is recorded under <out>/runs/.'); return; }
+  if (values.help) { console.log('Usage: npm run cli dashboard -- [--port 3000] [--out reports] [--fake] [--agent naive|grok|grok-careful|<id from agents.json>]\n       npm run demo:replay -- [recording.journal.json] [--speed 2]\nDefaults: Arc Testnet + Grok. Runs start from the browser. Every finished run is recorded under <out>/runs/.'); return; }
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('--port must be an integer from 0 to 65535.');
-  if (values.agent && !['naive', 'grok', 'grok-careful'].includes(values.agent)) throw new Error('Choose --agent naive, grok, or grok-careful.');
   let replay: { journal: RunJournal; speed: number } | undefined;
   if (values.replay) {
     const path = positionals[0] ?? latestJournal(values.out);
@@ -175,7 +180,7 @@ export async function dashboardCommand(args: string[]): Promise<void> {
     console.log(`Replaying ${path} (recorded ${replay.journal.recordedAt}). Offline: nothing is executed.`);
   }
   const dashboard = await startDashboard({ port, outDir: values.out, ...(replay ? { replay } : {}), defaults: {
-    network: values.fake ? 'fake' : 'arc-testnet', agent: (values.agent ?? 'grok') as RunConfig['agent'],
+    network: values.fake ? 'fake' : 'arc-testnet', agent: values.agent ?? 'grok',
   } });
   console.log(`Tripwire live attack lab${replay ? ' (replay)' : ''}\n${dashboard.url}\n${replay ? 'Click Run comparison to play the recording.' : 'Runs begin in the browser. Ctrl+C finishes the current scenario before shutting down.'}`);
   const shutdown = () => { void dashboard.close().then(() => { process.off('SIGINT', shutdown); process.off('SIGTERM', shutdown); }); };

@@ -29,7 +29,7 @@ const RUN_USAGE = `Usage: npm run cli run -- (--all | --scenario <id> ...) [opti
   --compare           run with the guard, then without; writes ${DEFAULT_RESULTS_DIR}/redteam.{json,md}
   --audit <file>      append-only decision log (default: ${DEFAULT_RESULTS_DIR}/audit.jsonl)
   --results-dir <d>   where redteam.{json,md} and the audit log go (default: ${DEFAULT_RESULTS_DIR}, or --out when given)
-  --agent <kind>      ${AGENT_KINDS.join(' | ')} (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
+  --agent <id>        ${AGENT_KINDS.join(' | ')} or an agent id from agents.json (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
   --out <dir>         where reports are written (default: ${DEFAULT_REPORT_DIR})
   --facilitator <f>   on Arc, who settles x402 payments: circle (default; Circle's Facilitator
                       Service, falling back to local if its keyless trial runs out) | local
@@ -100,7 +100,7 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
     scenarios: selectScenarios(values.all, values.scenario, values.suite),
     audit,
     fake: values.fake,
-    agent: createAgent(values.agent, io.env),
+    agent: await createAgent(values.agent, io.env),
     outDir: values.out,
     io,
     ...(facilitator ? { facilitator } : {}),
@@ -189,7 +189,7 @@ Buys a report of a wallet's recent USDC transfers from the paid API and answers 
   --state <file>      where the guard keeps its state for those two (default: ${DEFAULT_STATE_FILE})
   --fake              offline: in-memory ledger instead of Arc Testnet
   --no-guard          baseline: approve every payment and receipt
-  --agent <kind>      ${AGENT_KINDS.join(' | ')} (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
+  --agent <id>        ${AGENT_KINDS.join(' | ')} or an agent id from agents.json (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
   --out <dir>         where reports are written (default: ${DEFAULT_REPORT_DIR})`;
 
 function parseAddress(value: string | undefined): Address | undefined {
@@ -254,7 +254,7 @@ export async function buyCommand(args: string[], io: CommandIo = defaultIo()): P
         (io.crash ?? (() => process.exit(CRASH_EXIT_CODE)))();
       }
     : undefined;
-  const agent = createAgent(values.agent, io.env);
+  const agent = await createAgent(values.agent, io.env);
 
   // The owner's page runs for the length of the purchase. Its address carries the token
   // that lets someone approve, so it goes to the terminal and nowhere the agent can read.
