@@ -7,6 +7,7 @@ import { renderHtml } from '../report/html.js';
 import { renderMarkdown } from '../report/render.js';
 import { serializeReport } from '../report/store.js';
 import { RunManager, DashboardError, type LiveEvent, type RunConfig } from './manager.js';
+import { latestJournal, loadJournal, type RunJournal } from './journal.js';
 import { renderDashboard } from './page.js';
 import { streamClient, streamsEnabled } from '../streams/client.js';
 
@@ -18,6 +19,7 @@ export interface DashboardServer {
 
 export async function startDashboard(options: {
   port?: number; outDir?: string; env?: NodeJS.ProcessEnv; defaults?: Partial<RunConfig>; manager?: RunManager;
+  replay?: { journal: RunJournal; speed?: number };
 } = {}): Promise<DashboardServer> {
   const manager = options.manager ?? new RunManager(options);
   const token = randomBytes(24).toString('base64url');
@@ -154,18 +156,28 @@ function reportFiles(run: NonNullable<RunManager['run']>): string[] {
 }
 
 export async function dashboardCommand(args: string[]): Promise<void> {
-  const { values } = parseArgs({ args, options: {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: {
     port: { type: 'string', default: '0' }, out: { type: 'string', default: 'reports' },
     fake: { type: 'boolean', default: false }, agent: { type: 'string' }, help: { type: 'boolean', default: false },
+    replay: { type: 'boolean', default: false }, speed: { type: 'string', default: '1' },
   } });
-  if (values.help) { console.log('Usage: npm run cli dashboard -- [--port 3000] [--out reports] [--fake] [--agent naive|grok|grok-careful]\nDefaults: Arc Testnet + Grok. Runs start from the browser.'); return; }
+  if (values.help) { console.log('Usage: npm run cli dashboard -- [--port 3000] [--out reports] [--fake] [--agent naive|grok|grok-careful]\n       npm run demo:replay -- [recording.journal.json] [--speed 2]\nDefaults: Arc Testnet + Grok. Runs start from the browser. Every finished run is recorded under <out>/runs/.'); return; }
   const port = Number(values.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('--port must be an integer from 0 to 65535.');
   if (values.agent && !['naive', 'grok', 'grok-careful'].includes(values.agent)) throw new Error('Choose --agent naive, grok, or grok-careful.');
-  const dashboard = await startDashboard({ port, outDir: values.out, defaults: {
+  let replay: { journal: RunJournal; speed: number } | undefined;
+  if (values.replay) {
+    const path = positionals[0] ?? latestJournal(values.out);
+    if (!path) throw new Error(`No recording found. Run a comparison in the dashboard first (recordings go to ${values.out}/runs/), or pass a .journal.json file.`);
+    const speed = Number(values.speed);
+    if (!(speed > 0)) throw new Error('--speed must be a positive number.');
+    replay = { journal: loadJournal(path), speed };
+    console.log(`Replaying ${path} (recorded ${replay.journal.recordedAt}). Offline: nothing is executed.`);
+  }
+  const dashboard = await startDashboard({ port, outDir: values.out, ...(replay ? { replay } : {}), defaults: {
     network: values.fake ? 'fake' : 'arc-testnet', agent: (values.agent ?? 'grok') as RunConfig['agent'],
   } });
-  console.log(`Tripwire live attack lab\n${dashboard.url}\nRuns begin in the browser. Ctrl+C finishes the current scenario before shutting down.`);
+  console.log(`Tripwire live attack lab${replay ? ' (replay)' : ''}\n${dashboard.url}\n${replay ? 'Click Run comparison to play the recording.' : 'Runs begin in the browser. Ctrl+C finishes the current scenario before shutting down.'}`);
   const shutdown = () => { void dashboard.close().then(() => { process.off('SIGINT', shutdown); process.off('SIGTERM', shutdown); }); };
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
