@@ -1,6 +1,10 @@
 {
-  "allowlist": ["0x1111111111111111111111111111111111111111"],
-  "receiveAddresses": ["0x1111111111111111111111111111111111111111"],
+  "allowlist": [
+    "0x1111111111111111111111111111111111111111"
+  ],
+  "receiveAddresses": [
+    "0x1111111111111111111111111111111111111111"
+  ],
   "perTxCap": "5",
   "dailyCap": "20",
   "hotBalanceCap": "10",
@@ -13,5 +17,37 @@
   "loopMaxRepeats": 2,
   "minConfirmations": 1,
   "approvalThreshold": "1",
-  "approvalTtlMs": 120000
+  "approvalTtlMs": 120000,
+  "api": {
+    "resources": [
+      "http://127.0.0.1:4030"
+    ],
+    "prices": {
+      "/premium/market-data": "0.001",
+      "/premium/news-sentiment": "0.002",
+      "/premium/compute": "0.005"
+    },
+    "rateLimit": {
+      "max": 5,
+      "windowMs": 60000
+    },
+    "duplicateWindowMs": 120000,
+    "tasks": {
+      "market-research": {
+        "description": "Look up market data and news sentiment",
+        "resources": [
+          "/premium/market-data",
+          "/premium/news-sentiment"
+        ],
+        "budget": "0.005"
+      },
+      "compute-job": {
+        "description": "Run a text analysis job",
+        "resources": [
+          "/premium/compute"
+        ],
+        "budget": "0.01"
+      }
+    }
+  }
 }

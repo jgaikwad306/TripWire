@@ -8,6 +8,7 @@ export function guardedTools(guard: Guard): AgentTools {
   return {
     getQuote: (merchantUrl, item, order) => guard.getQuote(merchantUrl, item, order),
     requestPayment: (req) => guard.requestPayment(req),
+    buyResource: (req) => guard.fetchPaid(req),
     checkBalance: () => guard.hotBalance(),
   };
 }
@@ -63,6 +64,23 @@ export const TOOL_DEFS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           reason: { type: 'string', description: 'Why this payment is being made' },
         },
         required: ['intent_id', 'pay_to', 'amount_usdc', 'reason'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'buy_resource',
+      description:
+        'Request a paid HTTP API resource (x402). The wallet requests the URL; if it answers 402 Payment Required, the wallet decides whether to pay (a gasless Circle Gateway USDC nanopayment) and retries. Returns whether payment was allowed and why, the HTTP status, and the response body (the data you paid for).',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Full URL including query, e.g. http://127.0.0.1:4030/premium/market-data?symbol=BTC' },
+          method: { type: 'string', enum: ['GET', 'POST'] },
+          body: { type: 'object', description: 'JSON body for POST' },
+        },
+        required: ['url'],
       },
     },
   },
@@ -152,6 +170,19 @@ export async function executeTool(
           reason: decision.reason,
           tx_hash: decision.txHash,
           ...(decision.merchantResponse ? { merchant_response: decision.merchantResponse } : {}),
+        };
+      }
+      case 'buy_resource': {
+        const method = typeof args.method === 'string' ? args.method.toUpperCase() : 'GET';
+        if (method !== 'GET' && method !== 'POST') throw new Error('method must be GET or POST');
+        const result = await tools.buyResource({ url: str(args, 'url'), method, ...(method === 'POST' ? { body: args.body ?? {} } : {}) });
+        return {
+          allowed: result.decision.allowed,
+          reason: result.decision.reason,
+          ...(result.status !== undefined ? { status: result.status } : {}),
+          ...(result.body !== undefined ? { body: result.body } : {}),
+          ...(result.paid ? { paid_usdc: formatUsdc(result.paid.amount) } : {}),
+          ...(result.decision.settlementRef ? { gateway_transfer: result.decision.settlementRef } : {}),
         };
       }
       case 'check_balance':

@@ -135,6 +135,28 @@ export interface Decision {
   receivedTx?: TxHash;
   /** What the merchant answered once paid: usually the goods. JSON-safe. */
   merchantResponse?: { status: number; body: unknown };
+  /** A Circle Gateway nanopayment: Gateway's transfer id. Settled onchain later, in a batch. */
+  settlementRef?: string;
+}
+
+/** A paid HTTP request the agent asks the wallet to make. Every field is untrusted. */
+export interface PaidRequest {
+  url: string;
+  method?: 'GET' | 'POST';
+  /** JSON body for POST. */
+  body?: unknown;
+}
+
+/** What came of a paid request: the guard's decision and, when it went ahead, the provider's answer. */
+export interface PaidResponse {
+  decision: Decision;
+  /** The provider's HTTP status, when it was asked. */
+  status?: number;
+  body?: unknown;
+  /** Set when a payment was made (or may have been). */
+  paid?: { amount: Usdc; payTo: Address; network: string; resource: string };
+  /** What the provider's 402 asked for, paid or not. Untrusted: as the provider stated it. */
+  asked?: { resource: string; payTo?: string; amountUsdc?: string; network?: string };
 }
 
 export interface Guard {
@@ -150,6 +172,14 @@ export interface Guard {
    * and confirms the settlement onchain before goods are delivered.
    */
   acceptPayment(req: IncomingPayment): Promise<Decision>;
+  /**
+   * Paid API side: requests the URL; when it answers 402, runs the API checks on its x402
+   * terms and only then signs and presents a payment (Circle Gateway nanopayment when
+   * offered). The agent never sees the signer.
+   */
+  fetchPaid(req: PaidRequest): Promise<PaidResponse>;
+  /** The owner declares the task the agent is working on: its allowed endpoints and budget. */
+  beginTask(name: string): void;
   /** Hold side: sweeps hot balance above the cap into the vault. */
   rebalance(): Promise<void>;
   hotBalance(): Promise<Usdc>;
@@ -163,6 +193,8 @@ export interface Guard {
 export interface AgentTools {
   getQuote(merchantUrl: string, item: string, order?: Record<string, string>): Promise<PaymentIntent>;
   requestPayment(req: PaymentRequest): Promise<Decision>;
+  /** A paid HTTP request, made and paid (or refused) by the guard. */
+  buyResource(req: PaidRequest): Promise<PaidResponse>;
   checkBalance(): Promise<Usdc>;
 }
 
@@ -207,7 +239,7 @@ export interface MerchantHandle {
 
 // ──────────────────────── Lane D: red team & report ────────────────────────
 
-export type ScenarioCategory = 'send' | 'hold' | 'receive' | 'honest';
+export type ScenarioCategory = 'send' | 'hold' | 'receive' | 'api' | 'honest';
 
 export interface ScenarioContext {
   wallet: WalletProvider;

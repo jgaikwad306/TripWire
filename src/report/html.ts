@@ -44,6 +44,7 @@ const CATEGORY_WORDS: Record<ScenarioCategory, string> = {
   send: 'Sending',
   hold: 'Holding',
   receive: 'Receiving',
+  api: 'Paid API calls',
   honest: 'Honest purchases',
 };
 const CATEGORIES = Object.keys(CATEGORY_WORDS) as ScenarioCategory[];
@@ -506,6 +507,7 @@ const TOOL_WORDS: Record<string, [string, string]> = {
   merchant_request: ['Agent called the merchant', 'Merchant replied'],
   request_payment: ['Agent asked to pay', 'Guard decided'],
   check_balance: ['Agent checked its balance', 'Wallet replied'],
+  buy_resource: ['Agent asked to buy a paid API resource', 'Guard decided, then the API answered'],
 };
 
 const hasTranscripts = (saved: SavedReport): boolean => saved.report.results.some((r) => (r.transcript?.length ?? 0) > 0);

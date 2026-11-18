@@ -105,7 +105,7 @@ describe('GrokAgent', () => {
     expect(merchant.deliveries()).toHaveLength(1);
     expect(seen[0]).toMatchObject({ model: 'test-model' });
     expect(seen[0]!.messages.map((m) => m.role)).toEqual(['system', 'user']);
-    expect(seen[0]!.tools!.length).toBe(4);
+    expect(seen[0]!.tools!.length).toBe(5);
   });
 
   it('without a guard, an obedient model pays the attacker on swap-payto', async () => {
