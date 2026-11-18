@@ -7,7 +7,7 @@ import { RunManager } from '../../src/dashboard/manager.js';
 
 /** Execute the actual browser entrypoint against captured server events. The DOM stub
  * captures markup/text sinks; HTTP/SSE behavior is covered by live.test.ts. */
-async function renderClient(config: unknown, snapshot: unknown, monitor: unknown = {}) {
+async function renderClient(config: unknown, snapshot: unknown, monitor: unknown = {}, globals: Record<string, unknown> = {}) {
   const elements = new Map<string, { innerHTML: string; textContent: string; hidden: boolean; style: Record<string, unknown>; value: string; className: string; querySelectorAll: () => never[]; addEventListener: () => void }>();
   const element = (id: string) => {
     if (!elements.has(id)) elements.set(id, { innerHTML: '', textContent: '', hidden: false, style: {}, value: '', className: '', querySelectorAll: () => [], addEventListener: () => {} });
@@ -20,10 +20,57 @@ async function renderClient(config: unknown, snapshot: unknown, monitor: unknown
     fetch: async (url: string) => ({ ok: true, json: async () => url.startsWith('/api/config') ? config : url.startsWith('/api/streams') ? monitor : snapshot }),
     setInterval: () => 1,
     EventSource: class { addEventListener() {} close() {} },
+    ...globals,
   });
   await new Promise((resolve) => setTimeout(resolve, 0));
   return elements;
 }
+
+describe('background ledger', () => {
+  const browser = (scrollY: number, reduce: boolean) => {
+    const listeners: Record<string, () => void> = {};
+    const window = { scrollY, matchMedia: () => ({ matches: reduce, addEventListener: () => {} }), addEventListener: (type: string, fn: () => void) => { listeners[type] = fn; } };
+    return { window, listeners };
+  };
+  const manager = () => new RunManager({ env: {} });
+
+  it('moves the far layer up and the near layer sideways at fractions of the scroll, wrapped to one tile', async () => {
+    // Arrange: 3000px down; far moves .12x on a 320px tile, near .2x on a 640px tile.
+    const { window, listeners } = browser(3000, false);
+
+    // Act
+    const dom = await renderClient(manager().config(), manager().snapshot(), {}, { window });
+
+    // Assert: 360 % 320 = 40 and 600 % 640 = 600, so neither layer outruns its tile.
+    expect(dom.get('ledger-far')!.style.transform).toBe('translate3d(0, -40px, 0)');
+    expect(dom.get('ledger-near')!.style.transform).toBe('translate3d(-600px, 0, 0)');
+    expect(listeners.scroll).toBeTypeOf('function');
+  });
+
+  it('lets the hero chain trail the scroll up to a cap and runs the pending block border', async () => {
+    // Arrange: lag is .3x of scroll, capped once the hero is long gone (1200px).
+    const near = browser(400, false), far = browser(5000, false);
+
+    // Act
+    const shallow = await renderClient(manager().config(), manager().snapshot(), {}, { window: near.window });
+    const deep = await renderClient(manager().config(), manager().snapshot(), {}, { window: far.window });
+
+    // Assert
+    expect(shallow.get('hero-chain')!.style.transform).toBe('translate3d(0, 120px, 0)');
+    expect(shallow.get('chain-pending')!.style.strokeDashoffset).toBe('-80');
+    expect(deep.get('hero-chain')!.style.transform).toBe('translate3d(0, 360px, 0)');
+  });
+
+  it('stays still when the reader prefers reduced motion', async () => {
+    const { window } = browser(3000, true);
+
+    const dom = await renderClient(manager().config(), manager().snapshot(), {}, { window });
+
+    expect(dom.get('ledger-far')!.style.transform).toBe('translate3d(0, 0px, 0)');
+    expect(dom.get('ledger-near')!.style.transform).toBe('translate3d(0px, 0, 0)');
+    expect(dom.get('hero-chain')!.style.transform).toBe('translate3d(0, 0px, 0)');
+  });
+});
 
 describe('browser presentation', () => {
   it('shows monitor progress and freezes, preserving native precision and escaping alert details', async () => {
