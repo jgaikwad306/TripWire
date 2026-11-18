@@ -55,6 +55,66 @@
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--text-small);font-weight:500;line-height:1.3;letter-spacing:var(--track-small);-webkit-font-smoothing:antialiased}
+/* Background ledger: two faint layers of blocks and links behind everything. Each SVG is
+   only a mask (data URIs cannot read tokens), so the colour is var(--line) and opacity
+   keeps it at the edge of notice. They move only with scroll (client.js: trackLedger):
+   the far chain drifts up slowly, the near rail slides sideways like blocks being
+   appended. Layers overhang the viewport by one near tile so a shift never shows an
+   edge; tile sizes here must match LEDGER in client.js. */
+.ledger-bg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.ledger-layer{position:absolute;inset:-640px;background-color:var(--line);will-change:transform}
+.ledger-far{
+  opacity:.035;
+  --chain:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320' fill='none' stroke='%23000'%3E%3Cpath d='M33.5 53.5h13v13h-13zM153.5 53.5h13v13h-13zM93.5 173.5h13v13h-13zM46.5 60.5h107M40.5 66.5v54h60v53M106.5 180.5h87'/%3E%3Cpath stroke-dasharray='2 2' d='M193.5 173.5h13v13h-13z'/%3E%3Cpath fill='%23000' stroke='none' d='M219 119h3v3h-3zM16 208h3v3h-3zM128 14h3v3h-3z'/%3E%3C/svg%3E");
+  -webkit-mask:var(--chain) 0 0 / 320px 320px repeat;mask:var(--chain) 0 0 / 320px 320px repeat;
+}
+.ledger-near{
+  opacity:.025;
+  --rail:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='640' fill='none' stroke='%23000'%3E%3Cpath d='M0 200.5h120M146 200.5h254M426 200.5h214M120.5 187.5h26v26h-26zM400.5 187.5h26v26h-26zM409.5 196.5h8v8h-8zM260.5 487.5h26v26h-26zM540.5 487.5h26v26h-26zM549.5 496.5h8v8h-8z'/%3E%3Cpath stroke-dasharray='4 6' d='M0 500.5h260M286 500.5h254M566 500.5h74'/%3E%3Cg fill='%23000' stroke='none' font-family='monospace' font-size='11'%3E%3Ctext x='170' y='192'%3E0110 1001 1101%3C/text%3E%3Ctext x='450' y='192'%3E0x9f3a%E2%80%A6c271%3C/text%3E%3Ctext x='300' y='492'%3E1011 0100 0110%3C/text%3E%3Ctext x='20' y='492'%3E0x2bb3%E2%80%A60c68%3C/text%3E%3C/g%3E%3C/svg%3E");
+  -webkit-mask:var(--rail) 0 0 / 640px 640px repeat;mask:var(--rail) 0 0 / 640px 640px repeat;
+}
+@media print{.ledger-bg,.hero-art{display:none}}
+
+/* Hero chain: the one bold background element, in the hero's empty right half where no
+   text sits. Signed blocks link by hash to the block awaiting the guard. Warm gray keeps
+   it clearly behind the headline; bits flip and the chain trails as the reader scrolls. */
+.hero-art{position:absolute;z-index:-1;right:var(--margin);top:clamp(5rem,16%,9rem);bottom:clamp(5rem,16%,10rem);width:min(38%,32rem);overflow:hidden;pointer-events:none}
+/* Reset the global icon stroke (currentColor, 1.6): it would outline every glyph in black. */
+.hero-art svg{display:block;width:100%;height:100%;stroke:none;stroke-width:1;stroke-linecap:butt;stroke-linejoin:miter}
+.chain-block{fill:var(--bg);stroke:var(--dark)}
+.chain-block.pending{stroke-dasharray:6 5}
+.chain-link{fill:none;stroke:var(--dark)}
+.chain-joint{fill:var(--dark)}
+.chain-signed{fill:var(--text)}
+.chain-text,.chain-stream{font-family:var(--mono);font-weight:400}
+.chain-text{font-size:13px;letter-spacing:0;fill:var(--muted)}
+.chain-label{fill:var(--text)}
+.chain-bits{fill:var(--dark);letter-spacing:.08em}
+.chain-stream{font-size:13px;letter-spacing:.08em;fill:var(--dark)}
+/* "red team" in the opening blurb: the signal colour, 5.6:1 on white. */
+.red-team{color:var(--signal)}
+
+/* Tripwires: a taut red wire between two black posts, laid in the empty gap above each
+   section and above the hero's last row, never behind text. Crossing one while scrolling
+   trips it: each half pivots on its post so the middle bows and settles, and the posts
+   flash. Static under reduced motion (the global rule removes the animation). */
+.section,.hero-bottom{position:relative}
+.tripwire{position:absolute;left:0;right:0;top:calc(var(--section) * .5);display:flex;align-items:center;height:1rem;margin-top:-.5rem;pointer-events:none}
+.hero-bottom>.tripwire{top:calc(var(--gap-7) * -.5)}
+.tripwire .post{flex:none;width:.125rem;height:1rem;background:var(--line)}
+.tripwire .wire{flex:1;height:.125rem;background:var(--signal)}
+.tripwire .l{transform-origin:left center}
+.tripwire .r{transform-origin:right center}
+.tripwire.tripped .l{animation:pluck-l .9s var(--ease)}
+.tripwire.tripped .r{animation:pluck-r .9s var(--ease)}
+.tripwire.tripped .post{animation:post-flash .9s var(--ease)}
+@keyframes pluck-l{12%{transform:rotate(1.4deg)}28%{transform:rotate(-.9deg)}44%{transform:rotate(.55deg)}62%{transform:rotate(-.3deg)}80%{transform:rotate(.1deg)}}
+@keyframes pluck-r{12%{transform:rotate(-1.4deg)}28%{transform:rotate(.9deg)}44%{transform:rotate(-.55deg)}62%{transform:rotate(.3deg)}80%{transform:rotate(-.1deg)}}
+@keyframes post-flash{10%,35%{background:var(--signal)}}
+@media print{.tripwire{display:none}}
+
+/* Below 900px the headline reaches within ~40px of the chain; drop the art, keep the wallpaper. */
+@media(max-width:900px){.hero-art{display:none}}
 button,input,select{font:inherit;letter-spacing:inherit;color:inherit}
 button,a,input,select,summary{-webkit-tap-highlight-color:transparent}
 button{cursor:pointer}
@@ -93,12 +153,14 @@ svg{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:1.6;stroke-l
 /* ==========================================================================
    Hero
    ========================================================================== */
-.hero{min-height:clamp(34rem,calc(100svh - 3.25rem),56rem);display:grid;grid-template-rows:auto 1fr auto;gap:var(--gap-7);padding:var(--gap-6) var(--margin) var(--margin);border-bottom:var(--border) solid var(--line)}
+.hero{position:relative;min-height:clamp(34rem,calc(100svh - 3.25rem),56rem);display:grid;grid-template-rows:auto 1fr auto;gap:var(--gap-7);padding:var(--gap-6) var(--margin) var(--margin);border-bottom:var(--border) solid var(--line)}
 .hero-top{display:grid;grid-template-columns:repeat(12,1fr);gap:var(--gutter)}
 .hero-intro{grid-column:1 / span 6;font-size:var(--text-large);line-height:1.3;letter-spacing:var(--track-large);max-width:30ch}
 .hero-version{grid-column:10 / -1;justify-self:end;text-align:right;color:var(--muted);line-height:1}
 .hero-middle{align-self:center;display:grid;gap:var(--gap-6)}
 .hero h1{font-size:var(--text-display);font-weight:500;line-height:.92;letter-spacing:var(--track-large);text-transform:uppercase}
+/* Subtitle to the headline: sits closer to the h1 than the actions do. */
+.hero-tagline{margin-top:calc(var(--gap-6) * -.5);font-size:var(--text-large);line-height:1.3;letter-spacing:var(--track-large);color:var(--text)}
 .hero-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--gap-3)}
 .hero-bottom{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--gap-6);flex-wrap:wrap}
 .category-list{display:flex;flex-wrap:wrap;gap:var(--gap-2) var(--gap-6);list-style:none;margin:0;padding:0;font-size:var(--text-large);letter-spacing:var(--track-large);line-height:1}

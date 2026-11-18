@@ -190,6 +190,15 @@ describe('live dashboard', () => {
     expect(html.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     const page = await html.text();
     expect(page).toContain('Your agent. Under attack.');
+    expect(page).toMatch(/<body>\s*<div class="ledger-bg" aria-hidden="true">/);
+    // Tripwires: one above the hero's bottom row and one in each section's top gap, all decorative.
+    expect(page.match(/<span class="tripwire" aria-hidden="true">/g)).toHaveLength(5);
+    expect(page).toContain('A live <span class="red-team">red team</span> for an AI agent');
+    // Decorative chain: hidden from assistive tech, each block's prev is the previous hash.
+    expect(page).toMatch(/<div class="hero-art" aria-hidden="true">/);
+    expect(page).toContain('prev 0x0e99…72ff');
+    expect(page).toContain('awaiting the guard');
+    expect(page).toMatch(/<\/h1>\s*<p class="hero-tagline[^"]*">TripWire signs only what passes your rules\.<\/p>/);
     // An inline icon stops the browser requesting /favicon.ico without the token (a 403).
     expect(page).toMatch(/<link rel="icon" href="data:[^"]*">/);
     expect(html.headers.get('content-security-policy')).toContain('img-src \'self\' data:');
