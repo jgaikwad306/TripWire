@@ -4,6 +4,8 @@ import { saveHtmlReport } from '../report/html.js';
 import { describeResult, renderMarkdown, renderTerminal } from '../report/render.js';
 import { saveReport, type HoldSnapshot, type Parties, type SavedReport } from '../report/store.js';
 import type { Address, Agent } from '../types.js';
+import type { AuditLog } from '../guard/audit.js';
+import { createArcClient } from '../chain/arc.js';
 import type { CommandIo } from './commands.js';
 import { NaiveAgent } from './naive-agent.js';
 import { runScenarios, type RunObserver } from './runner.js';
@@ -100,11 +102,15 @@ export async function runOnce(opts: {
   afterPaymentSent?: WorldOptions['afterPaymentSent'];
   observer?: RunObserver;
   facilitator?: FacilitatorChoice;
+  /** Append-only record of every payment decision in the run. */
+  audit?: AuditLog;
 }): Promise<SavedReport> {
   const { scenarios, guarded, fake, agent, outDir, io, activitySubject, approval, guardStore, afterPaymentSent } = opts;
+  if (!guarded && !fake) await requireTestnet(io.env);
   const worldOptions: WorldOptions = {
     guarded,
     agent,
+    ...(opts.audit ? { audit: opts.audit } : {}),
     ...(opts.facilitator ? { facilitator: opts.facilitator } : {}),
     onFacilitatorSwitch: (reason) => io.log(`  NOTE  ${reason}`),
     ...(activitySubject ? { activitySubject } : {}),
@@ -146,3 +152,19 @@ export async function runOnce(opts: {
   return saved;
 }
 
+
+/**
+ * The unguarded baseline signs whatever it is asked to, so it only ever runs where money
+ * is worthless: NETWORK must not name anything but a testnet, and the RPC node must
+ * really be Arc Testnet.
+ */
+export async function requireTestnet(env: NodeJS.ProcessEnv): Promise<void> {
+  const network = env.NETWORK?.trim().toLowerCase();
+  if (network && !['testnet', 'arc-testnet', 'fake'].includes(network)) {
+    throw new Error(`Refusing to run with the guard off: NETWORK is "${env.NETWORK}". Guard-off runs are testnet only.`);
+  }
+  const chainId = await createArcClient(env.ARC_RPC_URL || undefined).getChainId();
+  if (chainId !== ARC_TESTNET.chainId) {
+    throw new Error(`Refusing to run with the guard off: the RPC node is chain ${chainId}, not Arc Testnet (${ARC_TESTNET.chainId}).`);
+  }
+}
