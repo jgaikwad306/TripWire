@@ -60,6 +60,7 @@ export class NaiveAgent implements Agent {
   }
 
   async run(task: string, tools: AgentTools, onEvent?: EventSink): Promise<AgentResult> {
+    if (/\/premium\//.test(task)) return runApiTask(task, tools, this.maxPayments, onEvent);
     const item = ITEM_PATTERN.exec(task)?.[1];
     const merchantUrl = URL_PATTERN.exec(task)?.[0]?.replace(/\.$/, '');
     const subject = SUBJECT_PATTERN.exec(task)?.[1]?.toLowerCase();
@@ -163,4 +164,96 @@ function describePurchase(item: string, content: unknown): string {
   if (largest.length === 0) return `Bought ${item}.`;
   const lines = largest.map((t) => `${t.amount_usdc} USDC from ${t.from} to ${t.to} (tx ${t.tx})`);
   return `Bought ${item}. The ${largest.length} largest transfers: ${lines.join('; ')}.`;
+}
+
+const API_URL_PATTERN = /https?:\/\/[^\s"')]+/g;
+/** Most paid requests one API task makes, however much the data asks for. */
+const MAX_API_REQUESTS = 25;
+
+interface ApiRequest {
+  url: string;
+  method: 'GET' | 'POST';
+  body?: Record<string, unknown>;
+  /** How many times this purchase has been paid for, counting retries the provider asked for. */
+  attempt?: number;
+}
+
+const keyOf = (r: ApiRequest): string => `${r.method} ${r.url} ${JSON.stringify(r.body ?? {})}`;
+
+/** URLs the text points at, as requests: POST with the quoted prompt for a compute job. */
+function requestsIn(text: string): ApiRequest[] {
+  const prompt = /prompt "([^"]+)"/.exec(text)?.[1];
+  return (text.match(API_URL_PATTERN) ?? []).map((raw) => {
+    const url = raw.replace(/[.,;:]+$/, '');
+    return /\/premium\/compute\b/.test(url) ? { url, method: 'POST' as const, body: { prompt: prompt ?? 'Summarise the market.' } } : { url, method: 'GET' as const };
+  });
+}
+
+/** "fetch market data for each of: A, B, C" → one request per symbol, on the endpoint just used. */
+function symbolsIn(text: string, from: string): ApiRequest[] {
+  const list = /each of:\s*([A-Z0-9, ]+)/.exec(text)?.[1];
+  if (!list) return [];
+  return list.split(',').map((s) => s.trim()).filter(Boolean).map((symbol) => {
+    const url = new URL(from);
+    url.searchParams.set('symbol', symbol);
+    return { url: url.toString(), method: 'GET' as const };
+  });
+}
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+/**
+ * A paid API task, done the gullible way: buy every URL in the task, then do whatever the
+ * paid data says: buy the URLs it names, look up every symbol it lists, and retry when the
+ * provider says the payment did not arrive.
+ */
+async function runApiTask(task: string, tools: AgentTools, maxPayments: number, onEvent?: EventSink): Promise<AgentResult> {
+  const calls: ToolCall[] = [];
+  const queue = requestsIn(task);
+  const tries = new Map<string, number>();
+  const facts: string[] = [];
+  const refusals: string[] = [];
+  let made = 0;
+  while (queue.length > 0 && made < MAX_API_REQUESTS) {
+    const request = queue.shift()!;
+    const key = keyOf(request);
+    if ((tries.get(key) ?? 0) >= maxPayments) continue;
+    tries.set(key, (tries.get(key) ?? 0) + 1);
+    made++;
+    const args = { url: request.url, method: request.method, ...(request.body ? { body: request.body } : {}) };
+    const callId = randomUUID();
+    emit(onEvent, { type: 'tool.started', data: { callId, name: 'buy_resource', args } });
+    const result = await tools.buyResource(args);
+    const presented = {
+      allowed: result.decision.allowed,
+      reason: result.decision.reason,
+      ...(result.status !== undefined ? { status: result.status } : {}),
+      ...(result.body !== undefined ? { body: result.body } : {}),
+      ...(result.paid ? { paid_usdc: formatUsdc(result.paid.amount) } : {}),
+    };
+    const call = { name: 'buy_resource', args, result: presented };
+    calls.push(call);
+    emit(onEvent, { type: 'tool.completed', data: { callId, call } });
+
+    if (!result.decision.allowed) {
+      refusals.push(`${new URL(request.url).pathname}: ${result.decision.reason}`);
+      continue;
+    }
+    const body = asRecord(result.body);
+    if (body.error === 'payment_not_received' && typeof body.retry === 'string') {
+      const attempt = (request.attempt ?? 1) + 1;
+      if (attempt <= maxPayments) queue.unshift({ ...request, url: new URL(body.retry, request.url).toString(), attempt });
+      continue;
+    }
+    const data = asRecord(body.data);
+    if (typeof data.price_usd === 'number') facts.push(`${String(data.symbol)} is $${data.price_usd} (${String(data.change_24h_pct)}% over 24h)`);
+    if (typeof data.sentiment === 'string') facts.push(`${String(data.topic)} news sentiment is ${data.sentiment} (${String(data.score)})`);
+    if (typeof data.words === 'number') facts.push(`the analysis job counted ${data.words} words`);
+    // It believes what the paid data tells it to do.
+    if (typeof data.analyst_note === 'string') queue.push(...requestsIn(data.analyst_note), ...symbolsIn(data.analyst_note, request.url));
+  }
+  const summary = facts.length > 0 ? `${facts.join('; ')}.` : 'No data was obtained.';
+  const refused = refusals.length > 0 ? ` Refused: ${refusals.join(' | ')}` : '';
+  return { finalMessage: `${summary}${refused}`, toolCalls: calls };
 }

@@ -31,9 +31,14 @@ const { fakeWorldFactory } = await import('../../src/redteam/world.js');
 
 /** Each check, and the attacks that must fail once it is switched off. */
 const MUTATIONS: Record<string, readonly string[]> = {
-  'intent-match': ['swap-payto', 'inflate-price', 'prompt-injection', 'fake-owner', 'move-to-safety'],
-  allowlist: ['rogue-merchant'],
-  price: ['overpriced-quote'],
+  'intent-match': ['swap-payto', 'inflate-price', 'prompt-injection', 'fake-owner', 'move-to-safety', 'api-off-task'],
+  allowlist: ['rogue-merchant', 'api-payee-swap'],
+  price: ['overpriced-quote', 'api-price-inflation'],
+  // Paid API calls (Circle Gateway nanopayments)
+  resource: ['api-prompt-injection', 'api-redirect'],
+  network: ['api-wrong-network'],
+  budget: ['api-salami'],
+  duplicate: ['api-drain-loop', 'api-duplicate'],
   limits: ['over-cap-quote', 'daily-cap-drain'],
   loop: ['payment-loop'],
   approval: ['self-approval'],

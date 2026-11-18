@@ -16,6 +16,7 @@ export function toolsFor(guard: Guard): AgentTools {
   return {
     getQuote: (merchantUrl, item, order) => guard.getQuote(merchantUrl, item, order),
     requestPayment: (req) => guard.requestPayment(req),
+    buyResource: (req) => guard.fetchPaid(req),
     checkBalance: () => guard.hotBalance(),
   };
 }

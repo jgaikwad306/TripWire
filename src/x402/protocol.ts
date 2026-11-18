@@ -8,7 +8,7 @@ import {
 } from '@x402/core/http';
 import type { PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse } from '@x402/core/types';
 import { authorizationTypes } from '@x402/evm';
-import { getAddress, keccak256, toHex, type Hex } from 'viem';
+import { getAddress, keccak256, pad, toHex, type Hex } from 'viem';
 import { z } from 'zod';
 import { ARC_TESTNET, USDC_ADDRESS } from '../constants.js';
 import type { Address, TypedDataRequest, Usdc } from '../types.js';
@@ -109,15 +109,38 @@ export function chainIdOf(network: string): number {
   return Number(match[1]);
 }
 
-/** The EIP-712 message an exact payment signs, exactly as the facilitator will rebuild it. */
+/** EIP-712 domain name of Circle Gateway's batched payments (the x402 "GatewayWalletBatched" option). */
+export const GATEWAY_BATCHED_NAME = 'GatewayWalletBatched';
+
+/** Is this a Circle Gateway batched payment option rather than a direct USDC authorization? */
+export const isGatewayOption = (requirements: Pick<PaymentRequirements, 'extra'>): boolean =>
+  requirements.extra?.name === GATEWAY_BATCHED_NAME;
+
+/**
+ * The EIP-712 message an exact payment signs, exactly as the facilitator will rebuild it.
+ * A direct payment is signed over the token's own domain. A Gateway batched payment is
+ * signed over the Gateway Wallet's domain instead; version 2 of that domain adds the asset
+ * as a salt.
+ */
 export function authorizationTypedData(requirements: PaymentRequirements, authorization: Eip3009Authorization): TypedDataRequest {
   const name = requirements.extra?.name;
   const version = requirements.extra?.version;
   if (typeof name !== 'string' || typeof version !== 'string') {
     throw new Error(`Payment requirements for ${requirements.asset} do not name the token's EIP-712 domain.`);
   }
+  const gateway = isGatewayOption(requirements);
+  const verifyingContract = gateway ? requirements.extra?.verifyingContract : requirements.asset;
+  if (typeof verifyingContract !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(verifyingContract)) {
+    throw new Error('Gateway payment requirements do not name the Gateway Wallet contract.');
+  }
   return {
-    domain: { name, version, chainId: chainIdOf(requirements.network), verifyingContract: getAddress(requirements.asset) },
+    domain: {
+      name,
+      version,
+      chainId: chainIdOf(requirements.network),
+      verifyingContract: getAddress(verifyingContract),
+      ...(gateway && version === '2' ? { salt: pad(getAddress(requirements.asset)) } : {}),
+    },
     types: { TransferWithAuthorization: [...authorizationTypes.TransferWithAuthorization] },
     primaryType: 'TransferWithAuthorization',
     message: {
@@ -169,15 +192,16 @@ export async function signPayment(args: {
   };
 }
 
-/** The first option in a 402 that we can pay: exact, USDC, on Arc. */
+/** The first option in a 402 that we can pay: exact, USDC, on Arc. Gateway batched options come first. */
 export function pickRequirements(required: PaymentRequired): PaymentRequirements | undefined {
-  return required.accepts.find(
+  const payable = required.accepts.filter(
     (r) =>
       r.scheme === 'exact' &&
       r.network === ARC_NETWORK &&
       typeof r.asset === 'string' &&
       r.asset.toLowerCase() === USDC_ADDRESS.toLowerCase(),
   );
+  return payable.find(isGatewayOption) ?? payable[0];
 }
 
 /** Do two sets of requirements ask for the same payment? */

@@ -79,7 +79,7 @@ const transcriptEntrySchema = z.union([
   z.object({ kind: z.literal('tool'), name: z.string(), args: z.unknown(), result: z.unknown() }),
 ]);
 
-const categorySchema = z.enum(['send', 'hold', 'receive', 'honest']);
+const categorySchema = z.enum(['send', 'hold', 'receive', 'api', 'honest']);
 const categoryScoreSchema = z.object({ passed: z.number(), total: z.number(), score: z.number() });
 
 const resultSchema = z.object({
@@ -118,6 +118,8 @@ const savedReportSchema = z.object({
       send: categoryScoreSchema,
       hold: categoryScoreSchema,
       receive: categoryScoreSchema,
+      // Reports saved before paid API scenarios existed have no such category.
+      api: categoryScoreSchema.default({ passed: 0, total: 0, score: 0 }),
       honest: categoryScoreSchema,
     }),
     usdcLost: usdcSchema,

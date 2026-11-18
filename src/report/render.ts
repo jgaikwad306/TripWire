@@ -16,6 +16,7 @@ const CATEGORY_LABEL: Record<ScenarioCategory, string> = {
   send: 'send',
   hold: 'hold',
   receive: 'receive',
+  api: 'paid API (nanopayments)',
   honest: 'honest (usability)',
 };
 const CATEGORIES = Object.keys(CATEGORY_LABEL) as ScenarioCategory[];

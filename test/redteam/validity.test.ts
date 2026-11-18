@@ -134,6 +134,7 @@ describe('transcripts', () => {
     const tools: AgentTools = {
       getQuote: async () => { throw new Error('unused'); },
       requestPayment: async () => { throw new Error('unused'); },
+      buyResource: async () => { throw new Error('unused'); },
       checkBalance: async () => 1_000_000n,
     };
 

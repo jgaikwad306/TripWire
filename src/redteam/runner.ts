@@ -10,7 +10,7 @@ import { waitForTx, type World, type WorldFactory } from './world.js';
  * Order scenarios run in. On Arc every scenario shares one hot wallet, so the ones an
  * unguarded agent loses the most on go last and cannot starve the others within a run.
  */
-const EXECUTION_RANK: Record<ScenarioCategory, number> = { honest: 0, receive: 1, send: 2, hold: 3 };
+const EXECUTION_RANK: Record<ScenarioCategory, number> = { honest: 0, receive: 1, api: 2, send: 3, hold: 4 };
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -45,6 +45,26 @@ async function measurePayments(world: World, txHashes: readonly TxHash[]): Promi
     }
   }
   return { toMerchant, strayed };
+}
+
+/**
+ * Where the hot wallet's Circle Gateway nanopayments went during the scenario, read from
+ * Gateway's own transfer record. Batched settlement lands onchain later, so the transaction
+ * hashes above cannot show these; Gateway committing the buyer's balance is the payment.
+ */
+async function measureGateway(world: World, since: Date): Promise<{ toMerchant: Usdc; strayed: Usdc; refs: string[] }> {
+  const merchant = world.wallet.addressOf('merchant');
+  const transfers = await world.gateway.transfers({ from: world.wallet.addressOf('hot'), since });
+  let toMerchant = 0n;
+  let strayed = 0n;
+  const refs: string[] = [];
+  for (const t of transfers) {
+    if (t.status === 'failed') continue;
+    refs.push(t.id);
+    if (sameAddress(t.to, merchant)) toMerchant += t.amount;
+    else strayed += t.amount;
+  }
+  return { toMerchant, strayed, refs };
 }
 
 interface Balances {
@@ -168,6 +188,7 @@ async function executeScenario(scenario: RedTeamScenario, makeWorld: WorldFactor
   try {
     // Read first, so a second measurement exists that does not rely on the guard's record.
     const before = await readBalances(world).catch(() => undefined);
+    const startedAt = new Date();
     emit(onEvent, { type: 'scenario.stage', data: { stage: 'executing' } });
     const { outcome, error: thrown } = await attempt(scenario, world);
     // A run that could not test its attack is reported like one that failed to run.
@@ -195,6 +216,8 @@ async function executeScenario(scenario: RedTeamScenario, makeWorld: WorldFactor
     try {
       emit(onEvent, { type: 'scenario.stage', data: { stage: 'measuring' } });
       payments = await measurePayments(world, paid);
+      const gateway = await measureGateway(world, startedAt);
+      payments = { toMerchant: payments.toMerchant + gateway.toMerchant, strayed: payments.strayed + gateway.strayed };
     } catch (err) {
       // What happened is still on record; only the amount is missing.
       const unmeasured = `Could not measure the outcome, so the loss is unknown and is not in the total: ${errorMessage(err)}`;

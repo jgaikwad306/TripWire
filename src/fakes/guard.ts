@@ -4,6 +4,8 @@ import type {
   Decision,
   Guard,
   IncomingPayment,
+  PaidRequest,
+  PaidResponse,
   PaymentIntent,
   PaymentRequest,
   QuoteFetcher,
@@ -13,7 +15,21 @@ import type {
 } from '../types.js';
 import { presentPayment } from '../x402/client.js';
 import type { Facilitator } from '../x402/facilitator.js';
-import { MAX_TIMEOUT_SECONDS, eip3009Of, nonceFor, signPayment } from '../x402/protocol.js';
+import { GATEWAY_VALIDITY_SECONDS, transferCounts, type GatewayReader } from '../x402/gateway.js';
+import {
+  HEADER,
+  MAX_TIMEOUT_SECONDS,
+  decode,
+  eip3009Of,
+  encode,
+  isGatewayOption,
+  nonceFor,
+  pickRequirements,
+  signPayment,
+} from '../x402/protocol.js';
+import { auditEntry, safeAppend, type AuditContext, type AuditLog } from '../guard/audit.js';
+import { parsePaidRequest, readBody } from '../guard/index.js';
+import { formatUsdc } from '../constants.js';
 
 const errorText = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -35,8 +51,101 @@ export class AllowAllGuard implements Guard {
   constructor(
     private readonly wallet: WalletProvider,
     private readonly fetchQuote: QuoteFetcher,
-    private readonly opts: { facilitator?: Facilitator; chain?: ChainReader; fetchImpl?: typeof fetch; settleWaitMs?: number } = {},
+    private readonly opts: {
+      facilitator?: Facilitator;
+      chain?: ChainReader;
+      fetchImpl?: typeof fetch;
+      settleWaitMs?: number;
+      gateway?: GatewayReader;
+      audit?: AuditLog;
+    } = {},
   ) {}
+
+  beginTask(): void {
+    // No guard: a declared task limits nothing.
+  }
+
+  /**
+   * An unprotected x402 client, like a plain Gateway client's pay(): follows redirects
+   * anywhere, and pays whatever the 402 asks, to whoever it names, on whatever network.
+   */
+  async fetchPaid(req: PaidRequest): Promise<PaidResponse> {
+    const parsed = parsePaidRequest(req);
+    const context: AuditContext = { kind: 'api', resource: typeof req?.url === 'string' ? req.url : '(none)' };
+    const done = (response: PaidResponse): PaidResponse => {
+      this.log.push(response.decision);
+      safeAppend(this.opts.audit, auditEntry(response.decision, context, 'off'));
+      return response;
+    };
+    if (typeof parsed === 'string') return done({ decision: { allowed: false, check: 'request', reason: parsed } });
+    const fetchImpl = this.opts.fetchImpl ?? fetch;
+    const send = (headers: Record<string, string> = {}) =>
+      fetchImpl(parsed.url, {
+        method: parsed.method,
+        headers: { ...(parsed.body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+        ...(parsed.body !== undefined ? { body: JSON.stringify(parsed.body) } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+    try {
+      const first = await send();
+      if (first.status !== 402) return { decision: { allowed: true, check: 'none', reason: 'No payment was asked for.' }, status: first.status, body: await readBody(first) };
+      const required = decode.required(first.headers.get(HEADER.required) ?? '');
+      const requirements = pickRequirements(required) ?? required.accepts[0];
+      if (!requirements) return done({ decision: { allowed: false, check: 'none', reason: 'The 402 offered no payment option.' } });
+      // Where the money goes is wherever the redirected 402 came from.
+      context.resource = first.url || parsed.url.toString();
+      Object.assign(context, { payTo: requirements.payTo.toLowerCase(), network: requirements.network, amountUsdc: formatUsdc(BigInt(requirements.amount)) });
+      const gateway = isGatewayOption(requirements);
+      const nonce = nonceFor(randomUUID());
+      const payload = await signPayment({
+        sign: (data) => this.wallet.signTypedData('hot', data),
+        from: this.wallet.addressOf('hot'),
+        requirements,
+        nonce,
+        validBefore: Math.floor(Date.now() / 1000) + (gateway ? GATEWAY_VALIDITY_SECONDS : MAX_TIMEOUT_SECONDS),
+        ...(required.resource ? { resource: required.resource } : {}),
+      });
+      const target = first.url ? new URL(first.url) : parsed.url;
+      const paid = await fetchImpl(target, {
+        method: parsed.method,
+        headers: { ...(parsed.body !== undefined ? { 'content-type': 'application/json' } : {}), [HEADER.signature]: encode.signature(payload) },
+        ...(parsed.body !== undefined ? { body: JSON.stringify(parsed.body) } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const body = await readBody(paid);
+      let settlementRef: string | undefined;
+      let txHash: TxHash | undefined;
+      if (gateway && this.opts.gateway) {
+        const transfer = await this.waitForTransfer(this.opts.gateway, nonce);
+        if (transfer && transferCounts(transfer)) settlementRef = transfer.id;
+      } else if (!gateway && this.opts.chain) {
+        txHash = (await this.waitForUse(this.opts.chain, nonce))?.txHash;
+      }
+      return done({
+        decision: {
+          allowed: true,
+          check: 'none',
+          reason: 'No guard: the payment was signed as the 402 asked.',
+          ...(txHash ? { txHash } : {}),
+          ...(settlementRef ? { settlementRef } : {}),
+        },
+        status: paid.status,
+        body,
+        paid: { amount: BigInt(requirements.amount), payTo: requirements.payTo.toLowerCase() as `0x${string}`, network: requirements.network, resource: context.resource },
+      });
+    } catch (err) {
+      return done({ decision: { allowed: false, check: 'wallet', reason: errorText(err) } });
+    }
+  }
+
+  private async waitForTransfer(gateway: GatewayReader, nonce: `0x${string}`) {
+    const deadline = Date.now() + (this.opts.settleWaitMs ?? 0);
+    for (;;) {
+      const transfer = await gateway.transferByNonce(this.wallet.addressOf('hot'), nonce).catch(() => undefined);
+      if (transfer || Date.now() >= deadline) return transfer;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
 
   async getQuote(merchantUrl: string, item: string, order?: Record<string, string>): Promise<PaymentIntent> {
     const quote = await this.fetchQuote(merchantUrl, item, order);
