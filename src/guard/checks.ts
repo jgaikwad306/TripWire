@@ -13,6 +13,11 @@ export const CHECK = {
   approval: 'approval',
   reconcile: 'reconcile',
   monitoring: 'monitoring',
+  // paid API calls (x402 nanopayments)
+  resource: 'resource',
+  budget: 'budget',
+  rateLimit: 'rate-limit',
+  duplicate: 'duplicate',
   // receive side
   recipient: 'recipient',
   network: 'network',

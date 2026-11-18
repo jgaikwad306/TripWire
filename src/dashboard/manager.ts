@@ -11,7 +11,7 @@ import { FOCUSED_SCENARIOS, scenarioCatalog } from './catalog.js';
 import { streamsEnabled } from '../streams/client.js';
 
 export const runConfigSchema = z.object({
-  scenarioIds: z.array(z.string()).min(1).max(19).refine((ids) => new Set(ids).size === ids.length, 'Select each scenario once.'),
+  scenarioIds: z.array(z.string()).min(1).max(ALL_SCENARIOS.length).refine((ids) => new Set(ids).size === ids.length, 'Select each scenario once.'),
   network: z.enum(['arc-testnet', 'fake']),
   agent: z.enum(AGENT_KINDS),
 });

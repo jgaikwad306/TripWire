@@ -44,6 +44,7 @@ const CATEGORY_WORDS: Record<ScenarioCategory, string> = {
   send: 'Sending',
   hold: 'Holding',
   receive: 'Receiving',
+  api: 'Paid API calls',
   honest: 'Honest purchases',
 };
 const CATEGORIES = Object.keys(CATEGORY_WORDS) as ScenarioCategory[];

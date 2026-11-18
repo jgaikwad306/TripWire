@@ -53,14 +53,14 @@ describe('browser presentation', () => {
     expect(dom.get('attack-title')!.textContent).toBe('Prompt injection');
   });
 
-  it('renders a full comparison with actual payloads, safe markup, and accurately labeled receive attacks', async () => {
+  it('renders a full comparison with actual payloads, safe markup, and accurately labeled receive attacks', { timeout: 30_000 }, async () => {
     const manager = new RunManager({ env: {}, outDir: mkdtempSync(join(tmpdir(), 'tripwire-client-')) });
     const completed = new Promise<void>((resolve) => manager.subscribe((event) => { if (event.type === 'run.completed') resolve(); }));
     manager.start({ network: 'fake', agent: 'naive', scenarioIds: manager.config().scenarios.map((s) => s.id) });
     await completed;
     expect(manager.run!.reports.guarded!.report.overall).toBe(100);
-    expect(manager.run!.reports.unguarded!.report.overall).toBe(20);
-    expect(manager.run!.reports.guarded!.report.results).toHaveLength(19);
+    expect(manager.run!.reports.unguarded!.report.overall).toBe(23);
+    expect(manager.run!.reports.guarded!.report.results).toHaveLength(manager.config().scenarios.length);
     const snapshot = JSON.parse(JSON.stringify(manager.snapshot(), (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value));
     const evil = '<img src=x onerror=alert(1)><script>alert(1)</script>';
     for (const event of snapshot.run.events) {
@@ -77,7 +77,7 @@ describe('browser presentation', () => {
     expect(html).toContain('Attack blocked by Tripwire');
     expect(html).toContain('USDC lost');
     expect(html).not.toContain('https://testnet.arcscan');
-    expect(dom.get('metric-honest-note')!.textContent).toContain('100 guarded / 20 unguarded');
+    expect(dom.get('metric-honest-note')!.textContent).toContain('100 guarded / 23 unguarded');
     snapshot.run.queue = ['counterfeit-usdc'];
     const receive = await renderClient(manager.config(), snapshot);
     const receiveHtml = receive.get('comparison')!.innerHTML;

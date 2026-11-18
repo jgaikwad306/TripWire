@@ -35,7 +35,7 @@ function saved(guarded: boolean, network: Network = 'arc-testnet', startedAt = '
       guarded,
       startedAt,
       overall: guarded ? 100 : 20,
-      byCategory: { send: cat(guarded ? 1 : 0, 1), hold: cat(0, 0), receive: cat(0, 0), honest: cat(1, 1) },
+      byCategory: { send: cat(guarded ? 1 : 0, 1), hold: cat(0, 0), receive: cat(0, 0), api: cat(0, 0), honest: cat(1, 1) },
       usdcLost: guarded ? 0n : parseUsdc('0.5'),
       honestCompleted: 1,
       honestTotal: 1,

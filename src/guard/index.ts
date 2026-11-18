@@ -2,12 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { recoverTypedDataAddress } from 'viem';
 import { z } from 'zod';
 import { USDC_ADDRESS, formatUsdc } from '../constants.js';
+import { GATEWAY_VALIDITY_SECONDS, transferCounts, type GatewayReader, type GatewayTransfer } from '../x402/gateway.js';
 import { TransferRejectedError } from '../errors.js';
 import type {
   ChainReader,
   Decision,
   Guard,
   IncomingPayment,
+  PaidRequest,
+  PaidResponse,
   PaymentIntent,
   PaymentRequest,
   Quote,
@@ -20,16 +23,23 @@ import type {
 import { presentPayment, type MerchantAnswer } from '../x402/client.js';
 import type { Facilitator } from '../x402/facilitator.js';
 import {
+  HEADER,
   MAX_TIMEOUT_SECONDS,
   authorizationTypedData,
+  decode,
   eip3009Of,
+  encode,
+  isGatewayOption,
   nonceFor,
+  pickRequirements,
   signPayment,
   type PaymentPayload,
   type PaymentRequirements,
   type SettleResponse,
 } from '../x402/protocol.js';
+import { endpointOf, evaluateApi, isApprovedResource, requestKey, type ApiSpend } from './api.js';
 import { ApprovalDesk, type Approval } from './approvals.js';
+import { auditEntry, safeAppend, type AuditContext, type AuditLog } from './audit.js';
 import { CHECK, allow, deny, errorMessage, includesAddress, sameAddress } from './checks.js';
 import { excessOverCap } from './hold.js';
 import { IntentStore, MemoryReplayLedger, type ReplayLedger, type Spend } from './intents.js';
@@ -43,6 +53,7 @@ export { CHECK, type CheckName } from './checks.js';
 export { JsonFileGuardStore, MemoryGuardStore, type GuardStore } from './store.js';
 export { JsonFileReplayLedger, MemoryReplayLedger, type ReplayLedger } from './intents.js';
 export { defaultPolicy, parsePolicy, type Policy } from './policy.js';
+export { JsonlAuditLog, MemoryAuditLog, type AuditEntry, type AuditLog } from './audit.js';
 
 export interface GuardDeps {
   /** Optional independent outflow monitor. Failure blocks new spending. */
@@ -75,9 +86,16 @@ export interface GuardDeps {
   settleWaitMs?: number;
   /** Unix seconds, for payment authorization windows (chain time). Injectable for tests. */
   unixNow?: () => number;
+  /** Reads Circle Gateway: the balance nanopayments are drawn from, and whether one was accepted. */
+  gateway?: GatewayReader;
+  /** Append-only record of every decision, allowed or denied. */
+  audit?: AuditLog;
 }
 
 const SETTLE_POLL_MS = 500;
+const MAX_REDIRECTS = 3;
+const API_TIMEOUT_MS = 30_000;
+const MAX_BODY_CHARS = 8_000;
 
 /** A payment the checks allow, held until the owner approves it. */
 interface AwaitingApproval {
@@ -130,6 +148,8 @@ class GuardedWallet implements Guard {
   private receiveQueue: Promise<unknown> = Promise.resolve();
 
   private readonly approvals: ApprovalDesk;
+  /** The task the owner declared for the agent, with its own budget session. */
+  private task: { name: string; session: string } | undefined;
 
   constructor(private readonly deps: GuardDeps) {
     this.store = deps.store ?? new MemoryGuardStore();
@@ -148,6 +168,20 @@ class GuardedWallet implements Guard {
     return this.payments
       .filter((payment) => payment.state !== 'failed')
       .map((payment) => ({ payTo: payment.payTo, amount: payment.amount, at: payment.at }));
+  }
+
+  /** Paid API calls on record, for rate limits, duplicates and task budgets. */
+  private get apiSpends(): readonly ApiSpend[] {
+    return this.payments
+      .filter((p) => p.state !== 'failed' && p.endpoint && p.requestKey)
+      .map((p) => ({
+        endpoint: p.endpoint!,
+        requestKey: p.requestKey!,
+        amount: p.amount,
+        at: p.at,
+        served: p.served ?? false,
+        ...(p.session ? { session: p.session } : {}),
+      }));
   }
 
   /** Writes the current state down. Throws if it cannot, so callers can stop before money moves. */
@@ -339,6 +373,7 @@ class GuardedWallet implements Guard {
     // Item names are compared the way the price check compares them, so "Report " is the
     // same order as "report" and cannot slip past an unfinished payment.
     const sameOrder = (payment: PaymentRecord): boolean =>
+      payment.endpoint === undefined &&
       normalizeItem(payment.item) === normalizeItem(intent.item) &&
       sameAddress(payment.payTo, intent.payTo) &&
       payment.amount === intent.amount;
@@ -419,10 +454,247 @@ class GuardedWallet implements Guard {
   }
 
   async requestPayment(req: PaymentRequest): Promise<Decision> {
-    try { return this.record(await this.payOnceApproved(req)); }
+    const intent = isObject(req) && typeof req.intentId === 'string' ? this.intents.get(req.intentId) : undefined;
+    const context: AuditContext = {
+      kind: 'send',
+      ...(intent ? { resource: `${intent.merchantUrl} ${intent.item}`, amountUsdc: formatUsdc(intent.amount), payTo: intent.payTo } : {}),
+      ...(intent?.requirements ? { network: intent.requirements.network } : {}),
+    };
+    try { return this.record(await this.payOnceApproved(req), context); }
     catch (err) {
-      if (err instanceof MonitoringError) return this.record(deny(CHECK.monitoring, err.message));
+      if (err instanceof MonitoringError) return this.record(deny(CHECK.monitoring, err.message), context);
       throw err;
+    }
+  }
+
+  beginTask(name: string): void {
+    if (!this.deps.policy.api?.tasks[name]) throw new Error(`Unknown task "${name}": declare it under api.tasks in the policy.`);
+    this.task = { name, session: `${name}:${randomUUID()}` };
+  }
+
+  async fetchPaid(req: PaidRequest): Promise<PaidResponse> {
+    let outcome: { response: PaidResponse; context?: AuditContext };
+    try {
+      outcome = await this.enqueue(() => this.buy(req));
+    } catch (err) {
+      if (!(err instanceof MonitoringError)) throw err;
+      outcome = { response: { decision: deny(CHECK.monitoring, err.message) }, context: { kind: 'api', resource: String(req?.url) } };
+    }
+    // A request that asked for no payment is not a payment decision.
+    if (outcome.context) this.record(outcome.response.decision, outcome.context);
+    return outcome.response;
+  }
+
+  /**
+   * The x402 chokepoint for paid APIs. Asks for the resource without paying, following
+   * redirects only to approved resources. A 402's terms go through every API check, and
+   * only then is a payment signed (a Circle Gateway nanopayment when offered) and presented
+   * on the same request. Whether it was paid is read from Gateway (or the chain), not
+   * from the provider's word.
+   */
+  private async buy(raw: PaidRequest): Promise<{ response: PaidResponse; context?: AuditContext }> {
+    const { policy, wallet } = this.deps;
+    const parsed = parsePaidRequest(raw);
+    const context: AuditContext = { kind: 'api', resource: typeof raw?.url === 'string' ? raw.url.slice(0, 500) : '(none)' };
+    const denied = (decision: Decision) => ({ response: { decision }, context });
+    if (typeof parsed === 'string') return denied(deny(CHECK.resource, parsed));
+    const { method, body } = parsed;
+    let url = parsed.url;
+    if (!isApprovedResource(policy.api, url)) {
+      return denied(deny(CHECK.resource, policy.api ? `${endpointOf(url)} is not an approved resource.` : 'The policy approves no paid API resources.'));
+    }
+
+    const fetchImpl = this.deps.fetchImpl ?? fetch;
+    const send = (target: URL, headers: Record<string, string> = {}) =>
+      fetchImpl(target, {
+        method,
+        redirect: 'manual',
+        headers: { ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(API_TIMEOUT_MS),
+      });
+
+    let res: Response;
+    for (let hop = 0; ; hop++) {
+      try {
+        res = await send(url);
+      } catch (err) {
+        return denied(deny(CHECK.resource, `Could not reach ${endpointOf(url)}: ${errorMessage(err)}`));
+      }
+      const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+      if (!location) break;
+      const next = new URL(location, url);
+      context.resource = next.toString();
+      if (hop >= MAX_REDIRECTS) return denied(deny(CHECK.resource, 'Too many redirects.'));
+      if (!isApprovedResource(policy.api, next)) {
+        return denied(deny(CHECK.resource, `${endpointOf(url)} redirected to ${endpointOf(next)}, which is not an approved resource.`));
+      }
+      url = next;
+    }
+    if (res.status !== 402) {
+      return { response: { decision: allow('No payment was asked for.'), status: res.status, body: await readBody(res) } };
+    }
+
+    context.resource = url.toString();
+    let requirements: PaymentRequirements | undefined;
+    let resource: PaymentPayload['resource'] | undefined;
+    try {
+      const required = decode.required(res.headers.get(HEADER.required) ?? '');
+      requirements = pickRequirements(required) ?? required.accepts[0];
+      resource = required.resource;
+    } catch {
+      return denied(deny(CHECK.network, 'The 402 carries no readable x402 payment terms.'));
+    }
+    if (!requirements) return denied(deny(CHECK.network, 'The 402 offers no payment option.'));
+    Object.assign(context, {
+      payTo: String(requirements.payTo).toLowerCase(),
+      network: requirements.network,
+      ...(/^\d+$/.test(requirements.amount) ? { amountUsdc: formatUsdc(BigInt(requirements.amount)) } : {}),
+    });
+
+    const gatewayRail = isGatewayOption(requirements);
+    const hot = wallet.addressOf('hot');
+    if (gatewayRail && !this.deps.gateway) return denied(deny(CHECK.wallet, 'No Circle Gateway reader is configured, so a nanopayment cannot be confirmed.'));
+    let balance: Usdc;
+    try {
+      balance = gatewayRail ? await this.deps.gateway!.balance(hot) : await wallet.getBalance('hot');
+    } catch (err) {
+      return denied(deny(CHECK.wallet, `Could not read the balance to pay from, nothing was paid: ${errorMessage(err)}`));
+    }
+    const key = requestKey(method, url, body);
+    const verdict = evaluateApi(
+      { url, requirements, requestKey: key, ...(this.task ? { task: this.task } : {}), dailySpends: this.spends, apiSpends: this.apiSpends, balance },
+      policy,
+      this.now(),
+    );
+    if (!verdict.allowed) return denied(verdict);
+
+    await this.monitoring(() => this.deps.safety?.check());
+    const amount = BigInt(requirements.amount);
+    const payTo = requirements.payTo.toLowerCase() as `0x${string}`;
+    const timeout = gatewayRail ? GATEWAY_VALIDITY_SECONDS : Math.min(requirements.maxTimeoutSeconds, MAX_TIMEOUT_SECONDS);
+    const reserved = this.putPayment({
+      key: randomUUID(),
+      intentId: `api:${randomUUID()}`,
+      item: url.pathname,
+      payTo,
+      amount,
+      at: this.now(),
+      state: 'reserved',
+      delivered: false,
+      validBefore: this.unixNow() + timeout,
+      endpoint: endpointOf(url),
+      requestKey: key,
+      served: false,
+      rail: gatewayRail ? 'gateway' : 'exact',
+      ...(this.task ? { session: this.task.session } : {}),
+    });
+    try {
+      this.persist();
+    } catch (err) {
+      this.payments = this.payments.filter((p) => p.key !== reserved.key);
+      return denied(deny(CHECK.wallet, `Could not record the payment before making it, so nothing was paid: ${errorMessage(err)}`));
+    }
+
+    const nonce = nonceFor(reserved.key);
+    await this.reserveOutflow(reserved, nonce);
+    let payload: PaymentPayload;
+    try {
+      payload = await signPayment({
+        sign: (data) => wallet.signTypedData('hot', data),
+        from: hot,
+        requirements,
+        nonce,
+        validBefore: reserved.validBefore!,
+        ...(resource ? { resource } : {}),
+      });
+    } catch (err) {
+      this.putPayment({ ...reserved, state: 'failed', error: errorMessage(err) });
+      this.tryPersist();
+      return denied(deny(CHECK.wallet, `Could not sign the payment, so nothing was paid: ${errorMessage(err)}`));
+    }
+
+    let answer: { status: number; body: unknown } | undefined;
+    let unreachable: string | undefined;
+    try {
+      const paid = await send(url, { [HEADER.signature]: encode.signature(payload) });
+      answer = { status: paid.status, body: await readBody(paid) };
+    } catch (err) {
+      unreachable = errorMessage(err);
+    }
+
+    // The provider's word is checked with Gateway (or the chain) before anything counts as paid.
+    let settled: { used: boolean; failed?: boolean; txHash?: TxHash; ref?: string } | undefined;
+    if (gatewayRail) {
+      const transfer = await this.gatewayTransfer(hot, nonce, answer !== undefined);
+      settled = transfer
+        ? { used: transferCounts(transfer), failed: !transferCounts(transfer), ref: transfer.id, ...(transfer.txHash ? { txHash: transfer.txHash } : {}) }
+        : transfer === null ? undefined : { used: false };
+    } else {
+      settled = await this.authorizationState(nonce, answer !== undefined);
+    }
+    const served = answer !== undefined && answer.status >= 200 && answer.status < 300;
+    const paidInfo = { amount, payTo, network: requirements.network, resource: url.toString() };
+    const response = (decision: Decision): { response: PaidResponse; context: AuditContext } => ({
+      response: { decision, ...(answer ? { status: answer.status, body: answer.body } : {}), paid: paidInfo },
+      context,
+    });
+
+    if (settled?.used) {
+      this.putPayment({
+        ...reserved,
+        state: 'sent',
+        delivered: true,
+        served,
+        ...(settled.txHash ? { txHash: settled.txHash } : {}),
+        ...(settled.ref ? { settlementRef: settled.ref } : {}),
+      });
+      this.tryPersist();
+      const via = gatewayRail ? `Circle Gateway (transfer ${settled.ref})` : `x402${settled.txHash ? ` (${settled.txHash})` : ''}`;
+      return response({
+        ...allow(`${verdict.reason} Paid ${formatUsdc(amount)} USDC to ${payTo} for ${url.pathname} via ${via}.`, settled.txHash),
+        ...(settled.ref ? { settlementRef: settled.ref } : {}),
+      });
+    }
+    if (settled?.failed) {
+      this.putPayment({ ...reserved, state: 'failed', error: 'Gateway marked the transfer failed.' });
+      this.tryPersist();
+      return response(deny(CHECK.wallet, 'Gateway marked the payment failed, so nothing was paid and nothing counts against the limits.'));
+    }
+    // Not seen. A provider holding the signed authorization could still submit it until it
+    // expires, so it counts against the limits until then.
+    const why = unreachable ?? `the provider answered ${answer?.status} and the payment was not found`;
+    this.putPayment({ ...reserved, state: 'unknown', served, error: why });
+    this.tryPersist();
+    return response(
+      deny(
+        CHECK.wallet,
+        `Payment not confirmed: ${why}. The signed authorization stays valid until ${new Date(reserved.validBefore! * 1000).toISOString()}, so it counts as possibly paid until then.`,
+      ),
+    );
+  }
+
+  /** The Gateway transfer made with this nonce, waiting up to settleWaitMs when one is expected. Null when Gateway cannot be read. */
+  private async gatewayTransfer(from: `0x${string}`, nonce: `0x${string}`, expect: boolean): Promise<GatewayTransfer | undefined | null> {
+    const deadline = Date.now() + (expect ? (this.deps.settleWaitMs ?? 0) : 0);
+    for (;;) {
+      let transfer: GatewayTransfer | undefined;
+      try {
+        transfer = await this.deps.gateway!.transferByNonce(from, nonce);
+      } catch {
+        if (Date.now() >= deadline) return null;
+        transfer = undefined;
+      }
+      if (transfer || Date.now() >= deadline) return transfer;
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+    }
+  }
+
+  private tryPersist(): void {
+    try {
+      this.persist();
+    } catch {
+      // The outcome is already decided; the file is checked again before the next payment.
     }
   }
 
@@ -443,7 +715,14 @@ class GuardedWallet implements Guard {
   }
 
   acceptPayment(req: IncomingPayment): Promise<Decision> {
-    const result = this.receiveQueue.then(async () => this.record(await this.checkIncoming(req)));
+    const context: AuditContext = {
+      kind: 'receive',
+      resource: `order ${String(req?.orderId)}`,
+      ...(isObject(req?.requirements) && /^\d+$/.test(String(req.requirements.amount))
+        ? { amountUsdc: formatUsdc(BigInt(req.requirements.amount)), payTo: String(req.requirements.payTo).toLowerCase(), network: String(req.requirements.network) }
+        : {}),
+    };
+    const result = this.receiveQueue.then(async () => this.record(await this.checkIncoming(req), context));
     this.receiveQueue = result.catch(() => undefined);
     return result;
   }
@@ -679,8 +958,9 @@ class GuardedWallet implements Guard {
     });
   }
 
-  private record(decision: Decision): Decision {
+  private record(decision: Decision, context?: AuditContext): Decision {
     this.log = [...this.log, decision];
+    if (context) safeAppend(this.deps.audit, auditEntry(decision, context, 'on', new Date(this.now())));
     return decision;
   }
 
@@ -695,6 +975,34 @@ class GuardedWallet implements Guard {
 class MonitoringError extends Error {}
 
 const isObject = (value: unknown): value is object => typeof value === 'object' && value !== null;
+
+/** A paid request as the agent sent it, checked: an http(s) URL, GET or POST, and a JSON body for POST. */
+export function parsePaidRequest(raw: unknown): { url: URL; method: 'GET' | 'POST'; body?: unknown } | string {
+  if (!isObject(raw)) return 'Malformed paid request.';
+  const { url, method, body } = raw as PaidRequest;
+  if (typeof url !== 'string') return 'The paid request has no URL.';
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return `"${url.slice(0, 200)}" is not a URL.`;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return 'Only http(s) URLs can be paid for.';
+  if (parsed.username || parsed.password) return 'URLs with credentials are not paid for.';
+  const verb = (method ?? 'GET').toUpperCase();
+  if (verb !== 'GET' && verb !== 'POST') return 'Only GET and POST requests can be paid for.';
+  return { url: parsed, method: verb, ...(verb === 'POST' ? { body: body ?? {} } : {}) };
+}
+
+/** A response body as JSON when it is JSON, else as (clipped) text. */
+export async function readBody(res: Response): Promise<unknown> {
+  const text = (await res.text().catch(() => '')).slice(0, MAX_BODY_CHARS);
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
 
 const isTxHash = (value: unknown): value is TxHash => typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
 

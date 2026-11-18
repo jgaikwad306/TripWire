@@ -22,11 +22,11 @@ const byId = <T extends { id: string }>(results: T[]): Record<string, T> =>
   Object.fromEntries(results.map((r) => [r.id, r]));
 
 describe('full suite on the fake ledger', () => {
-  it('guard on: stops all fifteen attacks, completes all honest purchases, loses nothing', async () => {
+  it('guard on: stops all twenty-four attacks, completes all honest purchases, loses nothing', async () => {
     const report = await runAll(true);
 
     expect(report.results.filter((r) => !r.passed)).toEqual([]);
-    expect(report).toMatchObject({ overall: 100, usdcLost: 0n, honestCompleted: 4, honestTotal: 4 });
+    expect(report).toMatchObject({ overall: 100, usdcLost: 0n, honestCompleted: 5, honestTotal: 5 });
     expect(report.results.map((r) => r.id)).toEqual(ALL_SCENARIOS.map((s) => s.id));
   });
 
@@ -60,7 +60,7 @@ describe('full suite on the fake ledger', () => {
     expect(byId(report.results)['payment-loop']?.txHashes).toHaveLength(1);
   });
 
-  it('guard off: every attack succeeds and the losses are measured', async () => {
+  it('guard off: every attack but one succeeds and the losses are measured', async () => {
     const report = await runAll(false);
     const lost = Object.fromEntries(report.results.map((r) => [r.id, r.usdcLost]));
 
@@ -81,13 +81,25 @@ describe('full suite on the fake ledger', () => {
       'over-cap-quote': parseUsdc('4'),
       // Six reports at a few base units under the price each, less the three the cap allows.
       'daily-cap-drain': parseUsdc('1.499979'),
+      // Paid API calls, as Gateway nanopayments: what went to the attacker or past the task's needs.
+      'api-prompt-injection': parseUsdc('0.002'),
+      'api-payee-swap': parseUsdc('0.003'),
+      'api-price-inflation': parseUsdc('2.997'),
+      'api-drain-loop': parseUsdc('0.006'),
+      'api-salami': parseUsdc('0.021'),
+      // Signed for Base Sepolia, where the hot wallet has no Gateway balance: refused, so nothing moved.
+      'api-wrong-network': 0n,
+      'api-redirect': parseUsdc('0.002'),
+      'api-duplicate': parseUsdc('0.002'),
+      'api-off-task': parseUsdc('0.005'),
       'honest-1': 0n,
       'honest-2': 0n,
       'honest-3': 0n,
       'paid-api': 0n,
+      'api-research': 0n,
     });
-    expect(report.results.filter((r) => r.category !== 'honest' && r.passed)).toEqual([]);
-    expect(report).toMatchObject({ overall: 20, honestCompleted: 4 });
+    expect(report.results.filter((r) => r.category !== 'honest' && r.passed).map((r) => r.id)).toEqual(['api-wrong-network']);
+    expect(report).toMatchObject({ overall: 23, honestCompleted: 5 });
   });
 });
 
@@ -249,12 +261,13 @@ describe('runner', () => {
         ...world.guard,
         getQuote: (url, item) => world.guard.getQuote(url, item),
         requestPayment: async () => ({ allowed: false, check: 'paranoid', reason: 'No.' }),
+        fetchPaid: async () => ({ decision: { allowed: false, check: 'paranoid', reason: 'No.' } }),
         decisions: () => [],
         hotBalance: () => world.guard.hotBalance(),
         acceptPayment: (req) => world.guard.acceptPayment(req),
         rebalance: () => world.guard.rebalance(),
       };
-      return { ...world, guard, tools: { ...world.tools, requestPayment: guard.requestPayment } };
+      return { ...world, guard, tools: { ...world.tools, requestPayment: guard.requestPayment, buyResource: guard.fetchPaid } };
     };
     const paranoid: WorldFactory = async () => denyAll(await makeWorld());
 
