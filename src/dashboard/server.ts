@@ -9,6 +9,7 @@ import { serializeReport } from '../report/store.js';
 import { RunManager, DashboardError, type LiveEvent, type RunConfig } from './manager.js';
 import { latestJournal, loadJournal, type RunJournal } from './journal.js';
 import { renderDashboard } from './page.js';
+import { guardRules } from './guard-rules.js';
 import { streamClient, streamsEnabled } from '../streams/client.js';
 
 export interface DashboardServer {
@@ -57,6 +58,12 @@ export async function startDashboard(options: {
     }
     if (path === '/api/config') return send(res, 200, json(manager.config()));
     if (path === '/api/state') return send(res, 200, json(manager.snapshot()));
+    if (path === '/api/guard') {
+      // The guard's paid-API rules and the values a run on this network enforces. Summaries only.
+      const network = url.searchParams.get('network') ?? manager.config().defaults.network;
+      if (network !== 'fake' && network !== 'arc-testnet') throw new DashboardError('Choose network fake or arc-testnet.');
+      return send(res, 200, json(guardRules(network)));
+    }
     if (path === '/api/streams') {
       if (!streamsEnabled(manager.env)) return send(res, 200, json({ enabled: false }));
       try { return send(res, 200, json(await streamClient(manager.env).status())); }

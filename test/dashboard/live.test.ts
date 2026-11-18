@@ -186,13 +186,24 @@ describe('live dashboard', () => {
     expect(foreignHost).toBe(403);
     expect((await fetch(endpoint('/api/config'), { headers: { origin: 'https://evil.example' } })).status).toBe(403);
     expect((await fetch(endpoint('/api/runs'), { method: 'GET' })).status).toBe(405);
+    // The guard's rules: same auth as every /api route, no secrets, no addresses.
+    expect((await fetch(url.origin + '/api/guard')).status).toBe(403);
+    expect((await request('/api/guard?network=mainnet')).status).toBe(400);
+    const guard = await (await request('/api/guard?network=arc-testnet')).text();
+    expect(guard).not.toContain(secret);
+    expect(guard).not.toMatch(/0x[0-9a-fA-F]{40}/);
+    expect((JSON.parse(guard) as { rules: unknown[] }).rules).toHaveLength(10);
     const html = await request('/');
     expect(html.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
     const page = await html.text();
     expect(page).toContain('Your agent. Under attack.');
     expect(page).toMatch(/<body>\s*<div class="ledger-bg" aria-hidden="true">/);
     // Tripwires: one above the hero's bottom row and one in each section's top gap, all decorative.
-    expect(page.match(/<span class="tripwire" aria-hidden="true">/g)).toHaveLength(5);
+    expect(page.match(/<span class="tripwire" aria-hidden="true">/g)).toHaveLength(6);
+    // How the guard works: first section after the hero, linked from the header.
+    expect(page).toMatch(/<nav class="site-nav"[^>]*><a href="#guard">Guard<\/a>/);
+    expect(page).toMatch(/<\/section>\s*<main>\s*<div id="notice"[^>]*><\/div>\s*<section class="section guard-section" id="guard"/);
+    expect(page).toContain('<a id="monitor-link" href="#streams-monitor">');
     expect(page).toContain('A live <span class="red-team">red team</span> for an AI agent');
     // Decorative chain: hidden from assistive tech, each block's prev is the previous hash.
     expect(page).toMatch(/<div class="hero-art" aria-hidden="true">/);

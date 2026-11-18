@@ -218,7 +218,7 @@ export function apiPolicy(apiUrl: string): ApiPolicy {
  * The owner's policy for a red-team run: only the merchant is payable, the dearest item
  * sits exactly at the per-payment cap (honest-3), and every item has a reference price.
  */
-export function runPolicy(wallet: WalletProvider, prices: Prices, overrides: Partial<Policy> = {}): Policy {
+export function runPolicy(wallet: Pick<WalletProvider, 'addressOf'>, prices: Prices, overrides: Partial<Policy> = {}): Policy {
   return defaultPolicy(wallet, {
     // One identical payment per window: an agent told "payment not received, pay again"
     // typically fetches a fresh quote first, which only this repeat limit can stop.

@@ -207,8 +207,53 @@
     return run?.config.network === 'arc-testnet' && /^[0-9a-f-]{36}$/i.test(id) ? `<a class="tx-link" href="https://gateway-api-testnet.circle.com/v1/x402/transfers/${id}" target="_blank" rel="noopener noreferrer">${text}${icon('link')}</a>` : `<span class="tx-link">${text} · simulated</span>`;
   }
   const placeholder = (text) => `<span class="step-placeholder">${h(text)}</span>`;
-  function box(title, detail, tone = '', check) {
-    return `<div class="decision-box ${tone}">${icon(tone === 'loss' || tone === 'warning' ? 'bolt' : tone === 'neutral' ? 'arrow' : 'shield')}<div><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}${check ? `<span class="check-tag">${h(check)}</span>` : ''}</div></div>`;
+  // A rule tag links to its row in "How the guard works" when that row exists.
+  const checkTag = (check, linked) => linked
+    ? `<a class="check-tag rule-link" href="#rule-${h(check)}" data-rule="${h(check)}">${h(check)}</a>`
+    : `<span class="check-tag">${h(check)}</span>`;
+  function box(title, detail, tone = '', check, linked = false) {
+    return `<div class="decision-box ${tone}">${icon(tone === 'loss' || tone === 'warning' ? 'bolt' : tone === 'neutral' ? 'arrow' : 'shield')}<div><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}${check ? checkTag(check, linked) : ''}</div></div>`;
+  }
+  // How the guard works: rules come from /api/guard (the run policy's real values).
+  const RULE_HIGHLIGHT_MS = 1800;
+  let guardSummary = null, guardNetwork = null, highlightTimer;
+  const hasRule = (check) => Boolean(guardSummary?.rules.some((rule) => rule.check === check));
+  function loadGuard(network) {
+    if (guardNetwork === network) return;
+    guardNetwork = network;
+    api('/api/guard?network=' + encodeURIComponent(network)).then((summary) => {
+      if (guardNetwork !== network) return;
+      guardSummary = summary;
+      $('guard-rules').innerHTML = summary.rules.map((rule, i) => `<li class="guard-rule" id="rule-${h(rule.check)}" tabindex="-1"><span class="rule-step">${String(i + 1).padStart(2, '0')}</span><div><p class="rule-name">${h(rule.name)}<code class="rule-check">${h(rule.check)}</code></p><p class="rule-line">${h(rule.line)}</p><p class="rule-value">${h(rule.value)}</p></div><span class="rule-count" id="rule-count-${h(rule.check)}"></span></li>`).join('');
+      schedule();
+    }).catch((err) => { $('guard-rules').innerHTML = `<li class="guard-error">${h(err.message)}</li>`; });
+  }
+  // Paid-API attacks the guard stopped in this run's guarded pass, by the rule that stopped them.
+  function blockedByRule() {
+    const counts = {};
+    for (const [k, state] of rows) {
+      const r = state.result;
+      if (k.startsWith('guarded:') && r?.category === 'api' && r.passed && r.stoppedBy) counts[r.stoppedBy] = (counts[r.stoppedBy] || 0) + 1;
+    }
+    return counts;
+  }
+  function renderGuardCounts() {
+    if (!guardSummary) return;
+    const counts = blockedByRule();
+    for (const rule of guardSummary.rules) {
+      const el = $('rule-count-' + rule.check);
+      if (el) el.textContent = counts[rule.check] ? `blocked ${counts[rule.check]}` : '';
+    }
+  }
+  function focusRule(check) {
+    const row = $('rule-' + check);
+    if (!row) return;
+    const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'center' });
+    row.focus({ preventScroll: true });
+    row.classList.remove('is-target'); void row.offsetWidth; row.classList.add('is-target');
+    clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(() => row.classList.remove('is-target'), RULE_HIGHLIGHT_MS);
   }
   function storyStep(number, label, body, seen, cls = '', tag = '') {
     return `<div class="story-step ${seen ? 'seen' : ''} ${cls}"><span class="step-number">${number}</span><div><div class="step-label">${h(label)}<span class="step-state">${h(tag)}</span></div><div class="step-body">${body}</div></div></div>`;
@@ -269,7 +314,7 @@
     const denial = state.decisions.find((d) => !d.decision.allowed), decision = denial || state.decisions.at(-1);
     if (decision) {
       const d = decision.decision;
-      response = box(guarded ? d.allowed ? 'Guard allowed the request' : decision.side === 'receive' ? 'Receipt refused' : 'Payment denied' : d.allowed ? 'Guard bypassed · request allowed' : 'Wallet could not complete the request', d.reason, guarded && !d.allowed ? '' : 'neutral', guarded ? d.check : undefined);
+      response = box(guarded ? d.allowed ? 'Guard allowed the request' : decision.side === 'receive' ? 'Receipt refused' : 'Payment denied' : d.allowed ? 'Guard bypassed · request allowed' : 'Wallet could not complete the request', d.reason, guarded && !d.allowed ? '' : 'neutral', guarded ? d.check : undefined, guarded && !d.allowed && decision.side === 'api' && hasRule(d.check));
       if (guarded && !d.allowed) response += `<p class="event-note">${h(checks[d.check] || d.check)}</p>`;
     } else if (state.result?.stoppedBy === 'agent') response = box('Guard not tested', 'The agent declined without a guard denial.', 'neutral');
     else if (!guarded && state.events.length) response = box('Guard bypassed', 'This pass uses the unprotected wallet and accepts payment proofs without verification.', 'neutral');
@@ -385,6 +430,7 @@
     [...$('comparison').querySelectorAll('.agent-answer')].forEach((el, i) => { el.open = Boolean(openAnswers[i]); });
     if (focusedAnswer >= 0) document.querySelectorAll('.agent-answer summary')[focusedAnswer]?.focus({ preventScroll: true });
     renderQueue(); renderHero(); renderMetrics(); renderEvidence(); renderDownloads();
+    loadGuard(config.network); renderGuardCounts();
   }
   function formConfig() { return { network: $('network').value, agent: $('agent').value, scenarioIds: [...document.querySelectorAll('#scenario-options input:checked')].map((input) => input.value) }; }
   function updateReadiness() {
@@ -408,6 +454,12 @@
     if (!draft.scenarioIds.length) { $('readiness').textContent = 'Select at least one scenario.'; $('readiness').className = 'readiness missing'; return; }
     settings = draft; source?.close(); run = null; rows = new Map(); sequence = 0; following = true; apiError = ''; lastEvidence = ''; $('settings').close(); schedule();
   });
+  $('comparison').addEventListener('click', (event) => {
+    const link = event.target.closest('.rule-link');
+    if (!link) return;
+    event.preventDefault();
+    focusRule(link.dataset.rule);
+  });
   $('queue').addEventListener('click', (event) => { const button = event.target.closest('[data-scenario]'); if (!button) return; selected = button.dataset.scenario; following = false; schedule(); });
   $('follow').addEventListener('click', () => { following = true; if (run?.scenarioId) selected = run.scenarioId; schedule(); });
   $('start').addEventListener('click', async () => {
@@ -421,6 +473,8 @@
   Promise.all([api('/api/config'), api('/api/state')]).then(([config, snapshot]) => {
     capabilities = config; catalog = config.scenarios; settings = config.defaults;
     $('connection').textContent = 'Connected'; $('connection-dot').style.background = 'var(--teal)'; hydrate(snapshot);
+    // Without Streams the Wallet monitoring section stays hidden, so its link would go nowhere.
+    if (!config.streamsEnabled) $('monitor-link').removeAttribute?.('href');
     if (config.streamsEnabled) {
       const nativeUnits = (raw) => { const n = BigInt(raw); return (n / 10n ** 18n).toString() + (n % 10n ** 18n ? '.' + (n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '') : ''); };
       const pollStreams = async () => {
