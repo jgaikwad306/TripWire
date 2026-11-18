@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { parseUsdc } from '../constants.js';
 import type { Address, Usdc, WalletProvider } from '../types.js';
+import type { ApiPolicy } from './api.js';
 
 /**
  * The owner's rules. Loaded from a local file (see loadPolicy in src/config.ts) or built
@@ -28,6 +29,8 @@ export interface Policy {
   readonly approvalThreshold?: Usdc | undefined;
   /** How long an approval request stays open, and how long an approval stays usable. */
   readonly approvalTtlMs: number;
+  /** Paid API calls (x402 nanopayments). Absent means no API is ever paid. */
+  readonly api?: ApiPolicy | undefined;
 }
 
 const DEFAULT_PRICE_TOLERANCE_BPS = 500;
@@ -72,6 +75,21 @@ const policyFileSchema = z
     minConfirmations: z.number().int().positive().default(DEFAULT_MIN_CONFIRMATIONS),
     approvalThreshold: usdcAmountSchema.optional(),
     approvalTtlMs: z.number().int().positive().default(DEFAULT_APPROVAL_TTL_MS),
+    api: z
+      .object({
+        resources: z.array(z.string().url()).min(1),
+        prices: z.record(z.string().startsWith('/'), usdcAmountSchema),
+        rateLimit: z.object({ max: z.number().int().positive(), windowMs: z.number().int().positive() }).strict(),
+        duplicateWindowMs: z.number().int().positive(),
+        tasks: z
+          .record(
+            z.string(),
+            z.object({ description: z.string(), resources: z.array(z.string().startsWith('/')).min(1), budget: usdcAmountSchema }).strict(),
+          )
+          .default({}),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -81,6 +99,17 @@ const freezePolicy = (policy: Policy): Policy =>
     allowlist: Object.freeze([...policy.allowlist]),
     receiveAddresses: Object.freeze([...policy.receiveAddresses]),
     expectedPrices: Object.freeze({ ...policy.expectedPrices }),
+    ...(policy.api
+      ? {
+          api: Object.freeze({
+            ...policy.api,
+            resources: Object.freeze([...policy.api.resources]),
+            prices: Object.freeze({ ...policy.api.prices }),
+            rateLimit: Object.freeze({ ...policy.api.rateLimit }),
+            tasks: Object.freeze(Object.fromEntries(Object.entries(policy.api.tasks).map(([k, t]) => [k, Object.freeze({ ...t, resources: Object.freeze([...t.resources]) })]))),
+          }),
+        }
+      : {}),
   });
 
 /** Validates the contents of a policy file. Amounts are decimal strings ("5", "0.50"). */

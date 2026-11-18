@@ -9,9 +9,13 @@ import { DEFAULT_REPORT_DIR, type SavedReport } from '../report/store.js';
 import { saveHtmlReport } from '../report/html.js';
 import { FOCUSED_SCENARIOS, scenarioCatalog } from './catalog.js';
 import { streamsEnabled } from '../streams/client.js';
+import { saveJournal, type RunJournal } from './journal.js';
+
+/** Longest pause a replay keeps between two recorded events, before speed-up. */
+const MAX_REPLAY_GAP_MS = 2_000;
 
 export const runConfigSchema = z.object({
-  scenarioIds: z.array(z.string()).min(1).max(19).refine((ids) => new Set(ids).size === ids.length, 'Select each scenario once.'),
+  scenarioIds: z.array(z.string()).min(1).max(ALL_SCENARIOS.length).refine((ids) => new Set(ids).size === ids.length, 'Select each scenario once.'),
   network: z.enum(['arc-testnet', 'fake']),
   agent: z.enum(AGENT_KINDS),
 });
@@ -37,6 +41,8 @@ export interface LiveRun {
   scenarioId?: string;
   reports: Partial<Record<Phase, SavedReport>>;
   error?: string;
+  /** Shown above the run, e.g. that it is a replay of a recording. */
+  warning?: string;
 }
 export class DashboardError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
@@ -66,16 +72,23 @@ export class RunManager {
     outDir?: string;
     defaults?: Partial<RunConfig>;
     execute?: typeof runOnce;
+    /** Replay this recording instead of executing anything. */
+    replay?: { journal: RunJournal; speed?: number };
+    /** Save a recording of each finished run (default true outside replay). */
+    record?: boolean;
   } = {}) {
     this.env = options.env ?? process.env;
     this.outDir = options.outDir ?? DEFAULT_REPORT_DIR;
   }
 
   config() {
-    const defaults: RunConfig = { scenarioIds: FOCUSED_SCENARIOS, network: 'arc-testnet', agent: 'grok', ...this.options.defaults };
+    const recorded = this.options.replay?.journal.run.config;
+    const defaults: RunConfig = recorded ?? { scenarioIds: FOCUSED_SCENARIOS, network: 'arc-testnet', agent: 'grok', ...this.options.defaults };
     // Only readiness booleans/names cross the boundary, never environment values.
-    return { defaults, scenarios: scenarioCatalog(), agents: AGENT_KINDS, model: this.env.XAI_MODEL ?? null, streamsEnabled: streamsEnabled(this.env),
-      configured: Object.fromEntries(['XAI_API_KEY', 'XAI_MODEL', 'CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'WALLET_ID_HOT', 'WALLET_ID_VAULT', 'WALLET_ID_MERCHANT', 'ATTACKER_PRIVATE_KEY', 'FAKE_USDC_ADDRESS'].map((key) => [key, Boolean(this.env[key])])) };
+    // A replay needs no keys: it executes nothing.
+    const replaying = Boolean(this.options.replay);
+    return { defaults, scenarios: scenarioCatalog(), agents: AGENT_KINDS, model: this.env.XAI_MODEL ?? null, streamsEnabled: !replaying && streamsEnabled(this.env), replay: replaying,
+      configured: Object.fromEntries(['XAI_API_KEY', 'XAI_MODEL', 'CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET', 'WALLET_ID_HOT', 'WALLET_ID_VAULT', 'WALLET_ID_MERCHANT', 'ATTACKER_PRIVATE_KEY', 'FAKE_USDC_ADDRESS'].map((key) => [key, replaying || Boolean(this.env[key])])) };
   }
 
   snapshot() { return { run: this.run ?? null }; }
@@ -86,6 +99,7 @@ export class RunManager {
 
   start(input: unknown): LiveRun {
     if (this.run && ['running', 'stopping'].includes(this.run.status)) throw new DashboardError('A comparison is already running.', 409);
+    if (this.options.replay) return this.startReplay(this.options.replay);
     const parsed = runConfigSchema.safeParse(input);
     if (!parsed.success) throw new DashboardError(parsed.error.issues.map((i) => i.message).join(' '));
     const config = parsed.data;
@@ -97,6 +111,37 @@ export class RunManager {
     this.run = { id: randomUUID(), status: 'running', config, queue: scenarios.map((s) => s.id), events: [], sequence: 0, reports: {} };
     this.task = this.execute(this.run);
     return this.run;
+  }
+
+  /** Plays a recorded run back through the same event stream, with its original pacing. Nothing executes. */
+  private startReplay(replay: { journal: RunJournal; speed?: number }): LiveRun {
+    const recorded = replay.journal.run;
+    this.stopping = false;
+    this.run = {
+      id: randomUUID(), status: 'running', config: recorded.config, queue: [...recorded.queue], events: [], sequence: 0, reports: {},
+      warning: `Replay of ${recorded.config.network === 'fake' ? 'an offline' : 'a live Arc Testnet'} run recorded ${replay.journal.recordedAt}. Nothing is executed and no funds move.`,
+    };
+    const run = this.run;
+    this.task = (async () => {
+      let previous: number | undefined;
+      for (const event of recorded.events) {
+        if (this.stopping) break;
+        const at = Date.parse(event.timestamp);
+        if (previous !== undefined && at > previous) await new Promise((r) => setTimeout(r, Math.min(MAX_REPLAY_GAP_MS, at - previous!) / (replay.speed ?? 1)));
+        previous = at;
+        if (event.type === 'phase.started') { run.phase = event.phase; run.scenarioId = undefined; }
+        if (event.type === 'scenario.started') run.scenarioId = event.scenarioId;
+        if (event.type === 'phase.completed' && event.phase && recorded.reports[event.phase]) run.reports[event.phase] = recorded.reports[event.phase]!;
+        if (event.type === 'run.completed') { run.status = recorded.status === 'completed' ? 'completed' : 'partial'; run.scenarioId = undefined; }
+        if (event.type === 'run.failed') { run.status = 'failed'; run.error = recorded.error ?? 'The recorded run failed.'; }
+        this.publish(event.type, event.data, event.phase, event.scenarioId);
+      }
+      if (run.status === 'running' || run.status === 'stopping') {
+        run.status = 'partial';
+        this.publish('run.completed', { status: run.status });
+      }
+    })();
+    return run;
   }
 
   stop(id: string): void {
@@ -160,6 +205,12 @@ export class RunManager {
       // Errors follow the same secret-redacting event path as tool results.
       this.publish('run.failed', { message: err instanceof Error ? err.message : String(err) });
       run.error = (run.events.at(-1)!.data as { message: string }).message;
+    }
+    // A recording for `npm run demo:replay`. Events were redacted as they were published.
+    if (this.options.record ?? !this.options.execute) {
+      // Saved after run.completed, which stays the last event a viewer receives.
+      try { saveJournal(run, this.outDir); }
+      catch { /* A recording is a convenience; the run itself is done. */ }
     }
   }
 }

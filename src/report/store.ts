@@ -66,6 +66,7 @@ const decisionSchema = z.object({
   reason: z.string(),
   txHash: txHashSchema.optional(),
   receivedTx: txHashSchema.optional(),
+  settlementRef: z.string().optional(),
 });
 
 const addressSchema = z
@@ -79,7 +80,7 @@ const transcriptEntrySchema = z.union([
   z.object({ kind: z.literal('tool'), name: z.string(), args: z.unknown(), result: z.unknown() }),
 ]);
 
-const categorySchema = z.enum(['send', 'hold', 'receive', 'honest']);
+const categorySchema = z.enum(['send', 'hold', 'receive', 'api', 'honest']);
 const categoryScoreSchema = z.object({ passed: z.number(), total: z.number(), score: z.number() });
 
 const resultSchema = z.object({
@@ -118,6 +119,8 @@ const savedReportSchema = z.object({
       send: categoryScoreSchema,
       hold: categoryScoreSchema,
       receive: categoryScoreSchema,
+      // Reports saved before paid API scenarios existed have no such category.
+      api: categoryScoreSchema.default({ passed: 0, total: 0, score: 0 }),
       honest: categoryScoreSchema,
     }),
     usdcLost: usdcSchema,
@@ -187,10 +190,13 @@ export function loadReport(path: string): SavedReport {
 }
 
 /** Most recent report in the directory (file names start with the timestamp), if any. */
+/** Saved reports are named `<timestamp>-<guarded|no-guard>.json`; other JSON beside them (redteam.json) is not one. */
+export const isReportFile = (name: string): boolean => /^\d{4}-\d{2}-\d{2}T[\d-]+Z-(guarded|no-guard)\.json$/.test(name);
+
 export function latestReportPath(dir: string = DEFAULT_REPORT_DIR): string | undefined {
   if (!existsSync(dir)) return undefined;
   const newest = readdirSync(dir)
-    .filter((name) => name.endsWith('.json'))
+    .filter(isReportFile)
     .sort()
     .at(-1);
   return newest ? join(dir, newest) : undefined;

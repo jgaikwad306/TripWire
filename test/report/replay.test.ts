@@ -6,7 +6,7 @@ import { FAKE_ADDRESSES } from '../../src/fakes/index.js';
 import { runCommand } from '../../src/redteam/commands.js';
 import { jsonSafe } from '../../src/redteam/scenarios/helpers.js';
 import { renderHtml } from '../../src/report/html.js';
-import { parseReport, serializeReport, type SavedReport } from '../../src/report/store.js';
+import { isReportFile, parseReport, serializeReport, type SavedReport } from '../../src/report/store.js';
 
 const io = { log: () => {}, env: {} };
 
@@ -14,7 +14,7 @@ async function run(args: string[]): Promise<{ guarded?: SavedReport; baseline?: 
   const dir = mkdtempSync(join(tmpdir(), 'awg-replay-'));
   await runCommand([...args, '--fake', '--agent', 'naive', '--out', dir], io);
   const saved = readdirSync(dir)
-    .filter((f) => f.endsWith('.json'))
+    .filter((f) => isReportFile(f))
     .map((f) => parseReport(readFileSync(join(dir, f), 'utf8')));
   return { guarded: saved.find((s) => s.report.guarded), baseline: saved.find((s) => !s.report.guarded) };
 }

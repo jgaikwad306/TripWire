@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request as httpRequest } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ALL_SCENARIOS } from '../../src/redteam/scenarios/index.js';
+
+const ALL_SCENARIO_COUNT = ALL_SCENARIOS.length;
 import { startDashboard, type DashboardServer } from '../../src/dashboard/server.js';
 import { RunManager, type LiveEvent } from '../../src/dashboard/manager.js';
 import { runOnce } from '../../src/redteam/service.js';
@@ -64,7 +67,7 @@ describe('live dashboard', () => {
     const { request, manager } = await start();
     const defaults = await (await request('/api/config')).json();
     expect(defaults.defaults).toMatchObject({ network: 'arc-testnet', agent: 'grok' });
-    expect(defaults.scenarios).toHaveLength(19);
+    expect(defaults.scenarios).toHaveLength(ALL_SCENARIO_COUNT);
     expect(manager.run).toBeUndefined();
     const missing = await request('/api/runs', defaults.defaults);
     expect(missing.status).toBe(422);
@@ -163,9 +166,9 @@ describe('live dashboard', () => {
     const stream = await eventReader(await request(`/api/runs/${manager.run!.id}/events`));
     await stream.until((event) => event.type === 'run.completed');
     await stream.cancel();
-    expect(stream.events.filter((event) => event.type === 'scenario.completed')).toHaveLength(38);
+    expect(stream.events.filter((event) => event.type === 'scenario.completed')).toHaveLength(ALL_SCENARIO_COUNT * 2);
     expect(stream.events.map((event) => event.sequence)).toEqual(manager.run!.events.map((event) => event.sequence));
-  });
+  }, 30_000);
 
   it('authenticates routes, rejects foreign hosts/origins, and redacts secrets from snapshots and events', async () => {
     const secret = 'sentinel-secret-api-key';

@@ -3,6 +3,7 @@ import { buyCommand, compareCommand, noGuardCommand, reportCommand, runCommand }
 import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.js';
 import { dashboardCommand } from './dashboard/server.js';
 import { streamsCommand } from './streams/commands.js';
+import { gatewayCommand } from './wallet/gateway.js';
 
 /**
  * Entry point: `npm run cli <command>`.
@@ -14,6 +15,7 @@ import { streamsCommand } from './streams/commands.js';
  *   buy       — one paid API purchase: buy a wallet's USDC activity report and answer from it [--address 0x…]
  *   refund    — return testnet USDC from the attacker and merchant to the hot wallet [--keep <usdc>] [--dry-run]
  *   report    — re-render the latest report [--html]
+ *   gateway   — Circle Gateway: `status` (addresses and balances) or `deposit <usdc>` from the hot wallet
  */
 type Command = (args: string[]) => Promise<void>;
 
@@ -28,6 +30,7 @@ const commands: Record<string, Command> = {
   buy: (args) => buyCommand(args),
   refund: refundCommand,
   report: (args) => reportCommand(args),
+  gateway: (args) => gatewayCommand(args),
 };
 
 const [name, ...args] = process.argv.slice(2);

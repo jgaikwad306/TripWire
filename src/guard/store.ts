@@ -34,6 +34,18 @@ export interface PaymentRecord {
    * Absent for payments made as plain transfers before x402.
    */
   readonly validBefore?: number;
+  /** Paid API calls only: the endpoint (origin + path), for rate limits. */
+  readonly endpoint?: string;
+  /** Paid API calls only: the exact request (method, URL, body), for duplicates. */
+  readonly requestKey?: string;
+  /** Paid API calls only: the declared task session it counts against. */
+  readonly session?: string;
+  /** Paid API calls only: did the provider deliver once paid? */
+  readonly served?: boolean;
+  /** How it was paid: a Circle Gateway batched nanopayment, or a direct USDC authorization. */
+  readonly rail?: 'gateway' | 'exact';
+  /** Gateway's transfer id for a batched nanopayment. */
+  readonly settlementRef?: string;
 }
 
 /** Everything the guard needs to carry on after a restart. */
@@ -120,6 +132,12 @@ const fileSchema = z.object({
       delivered: z.boolean(),
       error: z.string().optional(),
       validBefore: z.number().optional(),
+      endpoint: z.string().optional(),
+      requestKey: z.string().optional(),
+      session: z.string().optional(),
+      served: z.boolean().optional(),
+      rail: z.enum(['gateway', 'exact']).optional(),
+      settlementRef: z.string().optional(),
     }),
   ),
   usedReceipts: z.array(z.string()),

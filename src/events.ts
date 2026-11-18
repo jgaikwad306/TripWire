@@ -1,4 +1,4 @@
-import type { Decision, PaymentIntent, PaymentRequest, ScenarioResult, ToolCall, TranscriptEntry, TxHash, Usdc, WalletRole } from './types.js';
+import type { Decision, PaidRequest, PaymentIntent, PaymentRequest, ScenarioResult, ToolCall, TranscriptEntry, TxHash, Usdc, WalletRole } from './types.js';
 
 /** Public payment fields only: never expose a reusable PAYMENT-SIGNATURE. */
 export interface ReceiptObservation {
@@ -16,8 +16,9 @@ export type ExecutionEvent =
   | { type: 'tool.failed'; data: { callId: string; name: string; error: string } }
   | { type: 'transcript'; data: { entry: TranscriptEntry } }
   | { type: 'quote.recorded'; data: { intent: PaymentIntent } }
-  | { type: 'operation.started'; data: { operationId: string; side: 'send' | 'receive'; request: PaymentRequest | ReceiptObservation } }
-  | { type: 'guard.decision'; data: { operationId: string; side: 'send' | 'receive'; request: PaymentRequest | ReceiptObservation; decision: Decision } }
+  | { type: 'operation.started'; data: { operationId: string; side: 'send' | 'receive' | 'api'; request: PaymentRequest | ReceiptObservation | PaidRequest } }
+  | { type: 'guard.decision'; data: { operationId: string; side: 'send' | 'receive' | 'api'; request: PaymentRequest | ReceiptObservation | PaidRequest; decision: Decision; paid?: { amount: string; payTo: string; network: string; resource: string }; asked?: { resource: string; payTo?: string; amountUsdc?: string; network?: string }; status?: number } }
+  | { type: 'gateway.balances'; data: { hot: Usdc; merchant: Usdc; attacker: Usdc; when: 'start' | 'end' } }
   | { type: 'transfer.started' | 'transfer.confirmed' | 'transfer.failed'; data: { operationId: string; from: WalletRole; to: string; amount: Usdc; asset: 'USDC' | 'counterfeit'; txHash?: TxHash; error?: string } }
   | { type: 'settlement.started' | 'settlement.completed' | 'settlement.failed'; data: { operationId: string; from: string; to: string; amount: string; asset: 'USDC' | 'counterfeit'; txHash?: TxHash; error?: string } }
   | { type: 'signature.started' | 'signature.completed'; data: { role: WalletRole } }

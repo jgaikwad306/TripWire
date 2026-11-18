@@ -7,9 +7,11 @@ import { ApprovalDesk } from '../guard/approvals.js';
 import { JsonFileGuardStore } from '../guard/store.js';
 import { startOwnerConsole } from '../owner/server.js';
 import { renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
-import { DEFAULT_REPORT_DIR, latestReportPath, loadReport, type SavedReport } from '../report/store.js';
+import { DEFAULT_REPORT_DIR, isReportFile, latestReportPath, loadReport, type SavedReport } from '../report/store.js';
 import type { Address } from '../types.js';
-import { ALL_SCENARIOS, findScenario, type RedTeamScenario } from './scenarios/index.js';
+import { ALL_SCENARIOS, API_SUITE, findScenario, type RedTeamScenario } from './scenarios/index.js';
+import { JsonlAuditLog } from '../guard/audit.js';
+import { DEFAULT_RESULTS_DIR, saveResults } from '../report/results.js';
 import { paidApiScenario } from './scenarios/paid-api.js';
 import type { FacilitatorChoice } from './world.js';
 
@@ -19,10 +21,14 @@ export { sweepHot } from './service.js';
 const RUN_USAGE = `Usage: npm run cli run -- (--all | --scenario <id> ...) [options]
 
   --all               run every scenario
+  --suite api         run the paid-API suite: 9 Gateway nanopayment attacks + the research task
   --scenario <id>     run one scenario (repeatable)
   --fake              offline: in-memory ledger instead of Arc Testnet
-  --no-guard          baseline: approve every payment and receipt
-  --compare           run with the guard, then without, and compare
+  --guard on|off      off = baseline that approves every payment (also GUARD_MODE=on|off; testnet only)
+  --no-guard          same as --guard off
+  --compare           run with the guard, then without; writes ${DEFAULT_RESULTS_DIR}/redteam.{json,md}
+  --audit <file>      append-only decision log (default: ${DEFAULT_RESULTS_DIR}/audit.jsonl)
+  --results-dir <d>   where redteam.{json,md} and the audit log go (default: ${DEFAULT_RESULTS_DIR}, or --out when given)
   --agent <kind>      ${AGENT_KINDS.join(' | ')} (default: grok if XAI_API_KEY and XAI_MODEL are set, else naive)
   --out <dir>         where reports are written (default: ${DEFAULT_REPORT_DIR})
   --facilitator <f>   on Arc, who settles x402 payments: circle (default; Circle's Facilitator
@@ -43,8 +49,12 @@ const CRASH_EXIT_CODE = 70;
 
 const defaultIo = (): CommandIo => ({ log: (line) => console.log(line), env: process.env });
 
-function selectScenarios(all: boolean, ids: readonly string[]): readonly RedTeamScenario[] {
-  if (all && ids.length > 0) throw new Error('Use either --all or --scenario, not both.');
+function selectScenarios(all: boolean, ids: readonly string[], suite?: string): readonly RedTeamScenario[] {
+  if ([all, ids.length > 0, suite !== undefined].filter(Boolean).length > 1) throw new Error('Use one of --all, --suite or --scenario.');
+  if (suite !== undefined) {
+    if (suite !== 'api') throw new Error(`Unknown suite "${suite}". The only suite is api.`);
+    return API_SUITE;
+  }
   if (all) return ALL_SCENARIOS;
   if (ids.length === 0) throw new Error(`Say what to run.\n\n${RUN_USAGE}`);
   return ids.map((id) => {
@@ -60,12 +70,16 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
     args,
     options: {
       all: { type: 'boolean', default: false },
+      suite: { type: 'string' },
+      guard: { type: 'string' },
+      audit: { type: 'string' },
       scenario: { type: 'string', multiple: true, default: [] },
       fake: { type: 'boolean', default: false },
       'no-guard': { type: 'boolean', default: false },
       compare: { type: 'boolean', default: false },
       agent: { type: 'string' },
       out: { type: 'string', default: DEFAULT_REPORT_DIR },
+      'results-dir': { type: 'string' },
       facilitator: { type: 'string' },
       help: { type: 'boolean', default: false },
     },
@@ -75,10 +89,16 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
     return;
   }
   const facilitator = parseFacilitator(values.facilitator ?? io.env.X402_FACILITATOR);
-  if (values.compare && values['no-guard']) throw new Error('--compare already includes the no-guard run; drop --no-guard.');
+  const guardMode = parseGuardMode(values.guard ?? io.env.GUARD_MODE);
+  const noGuard = values['no-guard'] || guardMode === 'off';
+  if (values.compare && noGuard) throw new Error('--compare already includes the guard-off run; drop --no-guard / --guard off.');
+  // A run told to write somewhere else keeps its results and audit log there too.
+  const resultsDir = values['results-dir'] ?? (values.out === DEFAULT_REPORT_DIR ? DEFAULT_RESULTS_DIR : values.out);
+  const audit = new JsonlAuditLog(values.audit ?? join(resultsDir, 'audit.jsonl'));
 
   const base = {
-    scenarios: selectScenarios(values.all, values.scenario),
+    scenarios: selectScenarios(values.all, values.scenario, values.suite),
+    audit,
     fake: values.fake,
     agent: createAgent(values.agent, io.env),
     outDir: values.out,
@@ -86,13 +106,27 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
     ...(facilitator ? { facilitator } : {}),
   };
   if (!values.compare) {
-    await runOnce({ ...base, guarded: !values['no-guard'] });
+    await runOnce({ ...base, guarded: !noGuard });
+    io.log(`Audit log: ${audit.path}`);
     return;
   }
   const guarded = await runOnce({ ...base, guarded: true });
   const baseline = await runOnce({ ...base, guarded: false });
   io.log(`\n${renderComparison(guarded.report, baseline.report)}`);
   io.log(`\nComparison page: ${saveHtmlReport(guarded, baseline, values.out)}`);
+  const written = saveResults(guarded, baseline, resultsDir);
+  io.log(`Results: ${written.markdown} and ${written.json}\nAudit log: ${audit.path}`);
+  io.log(
+    `Summary: guard off lost ${written.results.summary.lostWithGuardOff} USDC, guard on lost ${written.results.summary.lostWithGuardOn} USDC; ` +
+      `${written.results.summary.blockedWithGuard} / ${written.results.summary.attacks} attacks blocked.`,
+  );
+}
+
+function parseGuardMode(value: string | undefined): 'on' | 'off' | undefined {
+  if (value === undefined || value === '') return undefined;
+  const mode = value.trim().toLowerCase();
+  if (mode === 'on' || mode === 'off') return mode;
+  throw new Error(`GUARD_MODE / --guard must be on or off, not "${value}".`);
 }
 
 function parseFacilitator(value: string | undefined): FacilitatorChoice | undefined {
@@ -111,7 +145,7 @@ const scenarioKey = (saved: SavedReport): string =>
 export function latestPair(dir: string): { guarded: SavedReport; baseline: SavedReport } | undefined {
   if (!existsSync(dir)) return undefined;
   const saved: SavedReport[] = [];
-  for (const name of readdirSync(dir).filter((n) => n.endsWith('.json')).sort().reverse()) {
+  for (const name of readdirSync(dir).filter(isReportFile).sort().reverse()) {
     try {
       saved.push(loadReport(join(dir, name)));
     } catch {
