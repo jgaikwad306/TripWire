@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { parseUsdc } from '../../src/constants.js';
 import { runCommand } from '../../src/redteam/commands.js';
 import { renderHtml } from '../../src/report/html.js';
-import { parseReport, serializeReport, type SavedReport } from '../../src/report/store.js';
+import { isReportFile, parseReport, serializeReport, type SavedReport } from '../../src/report/store.js';
 
 const io = { log: () => {}, env: {} };
 
@@ -13,7 +13,7 @@ async function runAndLoad(args: string[]): Promise<{ dir: string; saved: SavedRe
   const dir = mkdtempSync(join(tmpdir(), 'awg-hold-'));
   await runCommand([...args, '--fake', '--agent', 'naive', '--out', dir], io);
   const saved = readdirSync(dir)
-    .filter((f) => f.endsWith('.json'))
+    .filter((f) => isReportFile(f))
     .sort()
     .map((f) => parseReport(readFileSync(join(dir, f), 'utf8')));
   return { dir, saved };

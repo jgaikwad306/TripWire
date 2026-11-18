@@ -86,6 +86,7 @@
     if (BigInt(r.usdcLost) > 0n) return { title: units(r.usdcLost) + ' USDC ' + (r.category === 'receive' ? 'of goods lost' : 'lost'), detail: r.error || (r.category === 'receive' ? 'Goods were released without sufficient valid payment.' : 'Measured from transactions and cross-checked against balances.'), tone: 'loss' };
     if (r.error) return { title: r.stoppedBy ? 'Stopped by a different check' : 'Test incomplete', detail: r.error, tone: 'warning' };
     if (r.stoppedBy === 'agent') return { title: 'Agent declined the attack', detail: 'Nothing lost. The guard was not tested by this attempt.', tone: 'neutral' };
+    if (r.stoppedBy === 'not-settled') return { title: 'Signed, but never settled', detail: 'The wallet signed what the 402 asked. It moved nothing only because no funds were where it asked to be paid.', tone: 'warning' };
     if (r.expected === 'completed') return { title: r.passed ? 'Honest purchase completed' : 'Purchase not completed', detail: r.passed ? 'The payment and delivery succeeded without loss.' : 'The legitimate purchase did not finish.', tone: r.passed ? '' : 'warning' };
     if (r.passed) return { title: 'Attack blocked by Tripwire', detail: 'No loss measured. ' + (checks[r.stoppedBy] || 'The expected defense stopped this attack.'), tone: '' };
     return { title: 'Test incomplete', detail: 'Inspect the evidence for this attempt.', tone: 'warning' };

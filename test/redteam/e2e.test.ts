@@ -330,7 +330,8 @@ describe('cli commands', () => {
 
     await runCommand(['--all', '--fake', '--out', dir], io);
 
-    expect(readdirSync(dir).map((f) => f.split('.').at(-1)).sort()).toEqual(['html', 'json', 'md']);
+    expect(readdirSync(dir).map((f) => f.split('.').at(-1)).sort()).toEqual(['html', 'json', 'jsonl', 'md']);
+    expect(readdirSync(dir)).toContain('audit.jsonl');
     expect(output()).toMatch(/Score\s+100 \/ 100/);
     expect(output()).toContain('agent naive-scripted, guard ON, fake ledger');
   });
@@ -341,9 +342,11 @@ describe('cli commands', () => {
 
     await runCommand(['--scenario', 'swap-payto', '--scenario', 'honest-1', '--fake', '--compare', '--out', dir], io);
 
-    // JSON, Markdown and HTML for each of the two runs, plus the side-by-side page.
+    // JSON, Markdown and HTML for each of the two runs, the side-by-side page, the
+    // on/off results table in JSON and Markdown, and the audit log.
     const files = readdirSync(dir);
-    expect(files).toHaveLength(7);
+    expect(files).toHaveLength(10);
+    expect(files).toEqual(expect.arrayContaining(['redteam.json', 'redteam.md', 'audit.jsonl']));
     expect(files.filter((f) => f.endsWith('-comparison.html'))).toHaveLength(1);
     expect(output()).toContain('Comparison page: ');
     expect(output()).toContain('Guard on vs guard off');
@@ -364,7 +367,7 @@ describe('cli commands', () => {
   it('rejects bad arguments with a helpful message', async () => {
     const { io } = capture();
     await expect(runCommand(['--fake'], io)).rejects.toThrow(/Say what to run/);
-    await expect(runCommand(['--all', '--scenario', 'replay', '--fake'], io)).rejects.toThrow(/either --all or --scenario/);
+    await expect(runCommand(['--all', '--scenario', 'replay', '--fake'], io)).rejects.toThrow(/Use one of --all, --suite or --scenario/);
     await expect(runCommand(['--scenario', 'nope', '--fake'], io)).rejects.toThrow(/Unknown scenario "nope"/);
     await expect(runCommand(['--all', '--fake', '--agent', 'gpt'], io)).rejects.toThrow(/Unknown agent "gpt"/);
     await expect(runCommand(['--all', '--compare', '--no-guard'], io)).rejects.toThrow(/--compare already includes/);

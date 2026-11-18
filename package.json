@@ -7,7 +7,11 @@
   "scripts": {
     "cli": "tsx src/cli.ts",
     "dashboard": "tsx src/cli.ts dashboard",
-    "redteam": "tsx src/cli.ts run --all",
+    "redteam": "tsx src/cli.ts run --all --compare",
+    "redteam:api": "tsx src/cli.ts run --suite api --compare",
+    "setup-wallets": "tsx src/cli.ts gateway status",
+    "gateway:deposit": "tsx src/cli.ts gateway deposit",
+    "demo:replay": "tsx src/cli.ts dashboard --replay",
     "no-guard": "tsx src/cli.ts no-guard",
     "compare": "tsx src/cli.ts compare",
     "buy": "tsx src/cli.ts buy",
