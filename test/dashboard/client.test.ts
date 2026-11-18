@@ -98,6 +98,19 @@ describe('how the guard works', () => {
     expect(html.match(/<a class="check-tag rule-link" href="#rule-resource" data-rule="resource">resource<\/a>/g)).toHaveLength(1);
   });
 
+  it('opens on the attack lab, and on the guard tab when the URL points at it or at a rule', async () => {
+    const manager = new RunManager({ env: {} });
+    const view = async (hash?: string) => {
+      const dom = await renderClient(manager.config(), manager.snapshot(), {}, hash === undefined ? {} : { location: { search: '?token=test', hash } });
+      return { lab: !dom.get('panel-lab')!.hidden, guard: !dom.get('panel-guard')!.hidden, selected: (dom.get('tab-guard') as unknown as { ariaSelected: string }).ariaSelected, sectionNav: !dom.get('section-nav')!.hidden };
+    };
+
+    expect(await view()).toEqual({ lab: true, guard: false, selected: 'false', sectionNav: true });
+    expect(await view('#scenarios')).toEqual({ lab: true, guard: false, selected: 'false', sectionNav: true });
+    expect(await view('#guard')).toEqual({ lab: false, guard: true, selected: 'true', sectionNav: false });
+    expect(await view('#rule-duplicate')).toEqual({ lab: false, guard: true, selected: 'true', sectionNav: false });
+  });
+
   it('renders every rule in order with its policy value', async () => {
     const manager = new RunManager({ env: {} });
 
