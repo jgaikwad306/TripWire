@@ -53,9 +53,11 @@ export function renderDashboard(token: string): string {
 </defs></svg>
 <header class="site-header">
   <a class="wordmark" href="#top">Tripwire<sup>®</sup></a>
-  <nav class="site-nav" aria-label="Sections"><a href="#guard">Guard</a><a href="#scenarios">Scenarios <span class="count">(<span id="queue-count">04</span>)</span></a><a href="#evidence-section">Evidence</a><a href="#summary">Summary</a></nav>
+  <div class="header-center"><div class="view-tabs" role="tablist" aria-label="Views"><button type="button" role="tab" class="view-tab" id="tab-lab" aria-controls="panel-lab" aria-selected="true">Attack lab</button><button type="button" role="tab" class="view-tab" id="tab-guard" aria-controls="panel-guard" aria-selected="false" tabindex="-1">How the guard works</button></div><nav class="site-nav" id="section-nav" aria-label="Sections"><a href="#scenarios">Scenarios <span class="count">(<span id="queue-count">04</span>)</span></a><a href="#evidence-section">Evidence</a><a href="#summary">Summary</a></nav></div>
   <div class="header-status"><span class="setup"><strong id="sidebar-network">Arc Testnet</strong> / <span id="sidebar-agent">Grok agent</span></span><span class="connection"><span class="dot" id="connection-dot"></span><span id="connection">Connecting</span></span></div>
 </header>
+<main>
+  <div class="view-panel" id="panel-lab" role="tabpanel" aria-labelledby="tab-lab">
 <section class="hero" id="top" aria-labelledby="hero-title">
   ${heroChain()}
   <div class="hero-top"><p class="hero-intro fade-in">A live <span class="red-team">red team</span> for an AI agent that holds a wallet. Each attack runs twice, once with the guard and once without, so you see the exploit, follow the money and watch the guard decide.</p><span class="hero-version fade-in">TRIPWIRE® /V.01 (2026)</span></div>
@@ -66,17 +68,7 @@ export function renderDashboard(token: string): string {
   </div>
   <div class="hero-bottom fade-in">${TRIPWIRE}<ul class="category-list" id="hero-categories" aria-label="Selected scenarios by category"></ul><p class="hero-setup">The agent asks.<br><strong>The guard decides.</strong></p></div>
 </section>
-<main>
     <div id="notice" class="notice" role="status" hidden></div>
-    <section class="section guard-section" id="guard" aria-labelledby="guard-title">
-      ${TRIPWIRE}<div class="section-head"><span class="index">(0)</span><h2 id="guard-title">How the guard works</h2><span class="aside">Checked in order. The first rule that fails refuses.</span></div>
-      <div class="guard-intro">
-        <p class="guard-principle">The agent never holds a key. It asks the guard to pay, and the guard decides.</p>
-        <p class="flow guard-flow"><span class="flow-node observed">Agent</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node guard-node">Guard checks the rules</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node observed">Signs or refuses</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node observed">Paid API / Circle Gateway</span></p>
-      </div>
-      <ol class="guard-rules" id="guard-rules" aria-label="Rules the guard checks before paying an API, in order"></ol>
-      <p class="guard-monitor">If money leaves the wallet without going through the guard, the <a id="monitor-link" href="#streams-monitor">Streams monitor freezes spending</a>.</p>
-    </section>
     <section id="streams-monitor" class="section" aria-label="Wallet monitoring" hidden>${TRIPWIRE}<div class="section-head"><span class="index">(1)</span><h2>Wallet monitoring</h2><span class="aside" id="streams-state" role="status"></span></div><p id="streams-coverage"></p><div id="streams-details"></div></section>
     <section class="section" id="summary" aria-labelledby="summary-title">
       ${TRIPWIRE}<div class="section-head"><span class="index">(2)</span><h2 id="summary-title">Run summary</h2><span class="aside">Two passes. Same attacks.</span></div>
@@ -102,6 +94,18 @@ export function renderDashboard(token: string): string {
     </section>
     <section class="section" id="evidence-section" aria-labelledby="evidence-title">${TRIPWIRE}<div class="section-head"><span class="index">(4)</span><h2 id="evidence-title">Under the hood</h2><span class="aside">Observed events (<span id="evidence-count">00</span>)</span></div><div id="evidence"></div></section>
     <section id="downloads" class="section downloads" hidden></section>
+  </div>
+  <div class="view-panel" id="panel-guard" role="tabpanel" aria-labelledby="tab-guard" hidden>
+    <section class="section guard-section" id="guard" aria-labelledby="guard-title">
+      ${TRIPWIRE}<div class="section-head"><span class="index">(0)</span><h2 id="guard-title">How the guard works</h2><span class="aside">Checked in order. The first rule that fails refuses.</span></div>
+      <div class="guard-intro">
+        <p class="guard-principle">The agent never holds a key. It asks the guard to pay, and the guard decides.</p>
+        <p class="flow guard-flow"><span class="flow-node observed">Agent</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node guard-node">Guard checks the rules</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node observed">Signs or refuses</span><span class="flow-arrow" aria-hidden="true">→</span><span class="flow-node observed">Paid API / Circle Gateway</span></p>
+      </div>
+      <ol class="guard-rules" id="guard-rules" aria-label="Rules the guard checks before paying an API, in order"></ol>
+      <p class="guard-monitor">If money leaves the wallet without going through the guard, the <a id="monitor-link" href="#streams-monitor">Streams monitor freezes spending</a>.</p>
+    </section>
+  </div>
     <footer class="page-footer"><span><strong>Tripwire®</strong> The agent asks. The guard decides.</span><span id="footer-network">Arc Testnet · Testnet USDC</span></footer>
 </main>
 <dialog id="settings"><form id="settings-form"><div class="dialog-header"><div><div class="eyebrow">SET UP YOUR RUN</div><h2>Configure attack lab</h2></div><button type="button" class="icon-button" id="close-settings" aria-label="Close configuration"><svg><use href="#i-close"/></svg></button></div>
