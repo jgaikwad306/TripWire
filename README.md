@@ -226,6 +226,63 @@ npm run cli buy -- --resume             # a new process confirms that payment an
 - Owner approvals are not persisted: they are short-lived by design, so after a restart the owner is asked again.
 - Red-team runs keep the default in-memory store, fresh for every scenario. `--crash-after-send` starts from a clean state file (`.data/guard-state.json`, or `--state <file>`).
 
+### Use the guard from any AI agent (MCP)
+
+The guard runs as an [MCP](https://modelcontextprotocol.io) server, so any agent that speaks MCP can pay through it: Claude Desktop, Claude Code, Cursor, or a Python framework through its MCP adapter. The agent gets the same four tools as the built-in Grok agent (`get_quote`, `request_payment`, `check_balance`, `merchant_request`), and every payment still goes through the guard. The agent never sees a key.
+
+```bash
+npm run -s cli mcp -- --fake                      # offline: fake ledger and a local mock merchant
+npm run -s cli mcp -- --fake --attack swap-payto  # same, with the merchant attacking
+npm run -s cli mcp                                # Arc Testnet: Circle wallets, policy from guard-policy.json
+npm run -s cli mcp -- --with-merchant             # Arc Testnet, plus the mock merchant to buy from
+```
+
+- Transport is stdio: one JSON-RPC message per line on stdout, logs on stderr. Use `npm run -s` so npm itself prints nothing on stdout.
+- With `--fake` or `--with-merchant`, the agent is told the merchant's address and items when it connects.
+- Live mode keeps limits and payments in `.data/guard-state.json` (`--state <file>`), so restarting the agent or the server does not reset the daily cap.
+- If the policy sets `approvalThreshold`, the owner's approval page starts too. Its address, with the token, is printed on stderr only, so the agent cannot read it. A payment waits up to `--approval-wait` seconds (default 120).
+- `--attack <mode>` takes any merchant mode: `swap-payto`, `inflate-price`, `inject-prompt`, `retry-loop`, `fake-owner`, `move-to-safety`. Pointing a real assistant at an attacking merchant and watching the guard refuse makes a good live demo.
+
+**Claude Desktop** (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "tripwire": {
+      "command": "npm",
+      "args": ["run", "-s", "--prefix", "/path/to/TripWire", "cli", "mcp", "--", "--fake", "--attack", "swap-payto"]
+    }
+  }
+}
+```
+
+**Claude Code:**
+
+```bash
+claude mcp add tripwire -- npm run -s --prefix /path/to/TripWire cli mcp -- --fake
+```
+
+**Python** (official `mcp` package; LangChain and other frameworks can load the same server through their MCP adapters):
+
+```python
+import asyncio, json
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+server = StdioServerParameters(command="npm", args=["run", "-s", "--prefix", "/path/to/TripWire", "cli", "mcp", "--", "--fake"])
+
+async def main():
+    async with stdio_client(server) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool("check_balance", {})
+            print(json.loads(result.content[0].text))
+
+asyncio.run(main())
+```
+
+Code: `src/mcp/server.ts` (protocol, no SDK dependency) and `src/mcp/command.ts` (wiring). Tests in `test/mcp/` include a client process that connects over stdio and is refused when it tries to pay a swapped address.
+
 ### Integration checkpoints
 
 1. **One honest purchase onchain** — A's wallet, B's guard, C's agent, D's runner on H1.

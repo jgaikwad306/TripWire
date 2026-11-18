@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { mcpCommand } from './mcp/command.js';
 import { buyCommand, compareCommand, noGuardCommand, reportCommand, runCommand } from './redteam/commands.js';
 import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.js';
 
@@ -12,6 +13,7 @@ import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.
  *   buy       — one paid API purchase: buy a wallet's USDC activity report and answer from it [--address 0x…]
  *   refund    — return testnet USDC from the attacker and merchant to the hot wallet [--keep <usdc>] [--dry-run]
  *   report    — re-render the latest report [--html]
+ *   mcp       — serve the guard to any MCP client over stdio [--fake] [--attack <mode>] [--with-merchant]
  */
 type Command = (args: string[]) => Promise<void>;
 
@@ -24,6 +26,7 @@ const commands: Record<string, Command> = {
   buy: (args) => buyCommand(args),
   refund: refundCommand,
   report: (args) => reportCommand(args),
+  mcp: mcpCommand,
 };
 
 const [name, ...args] = process.argv.slice(2);
