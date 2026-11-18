@@ -177,6 +177,9 @@ const checkDuplicate: ApiCheck = ({ url, requestKey: key, apiSpends }, _policy, 
   return null;
 };
 
+/** The paid-API checks in the order they run. Exported so the dashboard can show them in this order. */
+export const API_CHECKS: readonly ApiCheck[] = [checkResource, checkTask, checkNetwork, checkAsset, checkPayee, checkPrice, checkLimits, checkBudget, checkRate, checkDuplicate];
+
 /**
  * Checks for paying a 402 from an HTTP API, in order; the first failure denies. Pure: no
  * I/O, no clock. What the agent says about the request is never read, only the request
@@ -185,8 +188,7 @@ const checkDuplicate: ApiCheck = ({ url, requestKey: key, apiSpends }, _policy, 
 export function evaluateApi(facts: ApiFacts, policy: Policy, now: number): Decision {
   const api = policy.api;
   if (!api) return deny(CHECK.resource, 'The policy approves no paid API resources.');
-  const checks: ApiCheck[] = [checkResource, checkTask, checkNetwork, checkAsset, checkPayee, checkPrice, checkLimits, checkBudget, checkRate, checkDuplicate];
-  for (const check of checks) {
+  for (const check of API_CHECKS) {
     const denial = check(facts, policy, api, now);
     if (denial) return denial;
   }

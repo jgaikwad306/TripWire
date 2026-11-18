@@ -416,3 +416,39 @@ dialog[open]{animation:dialog-in .6s var(--ease)}
 
 /* Circle Gateway balances under the run summary */
 .gateway-line{margin-top:var(--gap-5);padding-top:var(--gap-3);border-top:var(--border) solid var(--hairline);color:var(--muted);font-size:var(--text-body);font-variant-numeric:tabular-nums}
+
+/* ==========================================================================
+   How the guard works: principle, flow, the rules in the order they run, and
+   the monitor behind them. Solid background so the moving ledger never sits
+   behind its text; full-bleed so the wallpaper stops at a clean edge.
+   ========================================================================== */
+.guard-section{background:var(--bg);margin-inline:calc(var(--margin) * -1);padding-inline:var(--margin);padding-bottom:var(--gap-6)}
+.guard-section>.tripwire{left:var(--margin);right:var(--margin)}
+.guard-intro{display:grid;grid-template-columns:repeat(12,1fr);gap:var(--gap-3) var(--gutter);align-items:center;margin-bottom:var(--gap-5)}
+.guard-principle{grid-column:1 / span 6;font-size:var(--text-large);line-height:1.3;letter-spacing:var(--track-large);max-width:30ch}
+.guard-flow{grid-column:7 / -1;justify-self:end;padding:0}
+.guard-flow .flow-node{font-size:var(--text-small);padding:.45em .85em}
+/* Ten rules in two columns that read top to bottom, so the run order stays the reading order. */
+.guard-rules{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:repeat(5,auto);grid-auto-flow:column;column-gap:calc(var(--gutter) * 2);border-top:var(--border) solid var(--line)}
+.guard-rule{display:grid;grid-template-columns:2rem minmax(0,1fr) auto;gap:var(--gap-2);align-items:baseline;padding:var(--gap-3) var(--gap-2);border-bottom:var(--border) solid var(--hairline);scroll-margin-block:6rem;outline:none;transition:background-color .6s var(--ease),box-shadow .6s var(--ease)}
+.guard-rule.is-target{background:var(--surface);box-shadow:inset .25rem 0 0 var(--signal)}
+.rule-step{color:var(--muted);font-variant-numeric:tabular-nums}
+.rule-name{font-size:var(--text-body);line-height:1.2}
+.rule-check{margin-left:var(--gap-2);font-family:var(--mono);font-size:.6875rem;letter-spacing:0;color:var(--muted)}
+.rule-line{margin-top:var(--gap-1);line-height:1.3}
+.rule-value{margin-top:var(--gap-1);color:var(--muted);line-height:1.3}
+.rule-count:not(:empty){border-radius:var(--radius-pill);background:var(--black);color:var(--white);padding:.25em .65em;font-size:.6875rem;line-height:1;white-space:nowrap}
+.guard-error{padding:var(--gap-3) 0;color:var(--muted)}
+.guard-monitor{margin-top:var(--gap-4);font-size:var(--text-body);color:var(--muted)}
+.guard-monitor a{color:var(--text);text-underline-offset:.2em}
+/* A rule tag in a scenario's guard response, linked to its row above. */
+.rule-link{text-decoration:none;transition:background-color .3s var(--ease),color .3s var(--ease)}
+.rule-link:hover,.rule-link:focus-visible{background:var(--white);color:var(--black)}
+@media(max-width:1100px){
+  .guard-principle,.guard-flow{grid-column:1 / -1;justify-self:start}
+}
+@media(max-width:760px){
+  .guard-flow{flex-direction:column;align-items:flex-start}
+  .guard-flow .flow-arrow{transform:rotate(90deg)}
+  .guard-rules{grid-template-columns:1fr;grid-template-rows:none;grid-auto-flow:row}
+}
