@@ -2,6 +2,7 @@ export function renderDashboard(token: string): string {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light"><title>Tripwire — Live attack lab</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="/assets/dashboard.css?token=${token}"><script src="/assets/app.js?token=${token}" defer></script></head>
 <body>
 <svg class="svg-defs" aria-hidden="true"><defs>
