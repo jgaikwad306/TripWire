@@ -5,6 +5,55 @@
   const token = new URLSearchParams(location.search).get('token') || '';
   const h = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  // Background ledger speeds (fractions of scroll) and tile sizes; tiles match dashboard.css.
+  // Hero chain: trails the scroll by heroLag up to heroMax, its bits flip every bitStep px,
+  // and the pending block's dashed border runs at dashRate.
+  const LEDGER = { farRate: 0.12, farTile: 320, nearRate: 0.2, nearTile: 640, heroLag: 0.3, heroMax: 1200, bitStep: 32, dashRate: 0.2 };
+  // Deterministic bits for a seed, in groups of four: the same scroll position always shows the same bits.
+  function bitGroups(seed, groups) {
+    let x = (Math.imul(seed + 1, 2654435761) >>> 0) || 1;
+    return Array.from({ length: groups }, () => Array.from({ length: 4 }, () => {
+      x ^= x << 13; x ^= x >>> 17; x ^= x << 5; x >>>= 0;
+      return x & 1;
+    }).join('')).join(' ');
+  }
+  // Moves only when the reader scrolls, at most once a frame, and only via transform, text and dash offset.
+  function trackLedger() {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const far = $('ledger-far'), near = $('ledger-near'), still = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (!far || !near) return;
+    const chain = $('hero-chain'), pending = $('chain-pending'), bits = chain ? [...chain.querySelectorAll('[data-bits]')] : [];
+    let queued = false, lastStep = -1;
+    // Tripwires trip when they cross the middle of the viewport, in either direction.
+    const wires = [...document.querySelectorAll('.tripwire')], above = new Map();
+    const trip = (wire) => { wire.classList.remove('tripped'); void wire.offsetWidth; wire.classList.add('tripped'); };
+    const checkWires = () => {
+      const middle = window.innerHeight / 2;
+      wires.forEach((wire) => {
+        const isAbove = wire.getBoundingClientRect().top < middle;
+        if (above.has(wire) && above.get(wire) !== isAbove && !still.matches) trip(wire);
+        above.set(wire, isAbove);
+      });
+    };
+    const place = () => {
+      queued = false;
+      checkWires();
+      const y = still.matches ? 0 : window.scrollY;
+      far.style.transform = `translate3d(0, ${-((y * LEDGER.farRate) % LEDGER.farTile)}px, 0)`;
+      near.style.transform = `translate3d(${-((y * LEDGER.nearRate) % LEDGER.nearTile)}px, 0, 0)`;
+      if (!chain) return;
+      chain.style.transform = `translate3d(0, ${Math.min(y, LEDGER.heroMax) * LEDGER.heroLag}px, 0)`;
+      if (pending) pending.style.strokeDashoffset = String(-y * LEDGER.dashRate);
+      const step = Math.floor(y / LEDGER.bitStep);
+      if (step === lastStep || y === 0) return;
+      lastStep = step;
+      bits.forEach((node, i) => { node.textContent = bitGroups(step * 31 + i, Number(node.dataset.bits)); });
+    };
+    window.addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(place); } }, { passive: true });
+    still.addEventListener?.('change', place);
+    place();
+  }
+  trackLedger();
   const units = (value) => {
     try {
       const n = BigInt(value), sign = n < 0n ? '−' : '', a = n < 0n ? -n : n;
