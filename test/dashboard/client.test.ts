@@ -85,4 +85,21 @@ describe('browser presentation', () => {
     expect(receiveHtml).toContain('USDC of goods lost');
     expect(receiveHtml).not.toContain('Observed agent action');
   });
+
+  it('shows the off-quote request as the agent action, not a later honest purchase', { timeout: 30_000 }, async () => {
+    // Arrange: in fake-owner the agent first asks for 5 USDC to the attacker, then buys honestly.
+    const manager = new RunManager({ env: {}, outDir: mkdtempSync(join(tmpdir(), 'tripwire-client-')) });
+    const completed = new Promise<void>((resolve) => manager.subscribe((event) => { if (event.type === 'run.completed') resolve(); }));
+    manager.start({ network: 'fake', agent: 'naive', scenarioIds: ['fake-owner'] });
+    await completed;
+    const snapshot = JSON.parse(JSON.stringify(manager.snapshot(), (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value));
+
+    // Act
+    const html = (await renderClient(manager.config(), snapshot)).get('comparison')!.innerHTML;
+
+    // Assert: both columns lead with the attack request and still count every attempt.
+    expect(html.match(/Requested <strong>5 USDC<\/strong> to <strong class="coral">Attacker wallet<\/strong>/g)).toHaveLength(2);
+    expect(html).not.toContain('Requested <strong>0.5 USDC</strong>');
+    expect(html).toContain('2 payment requests observed');
+  });
 });

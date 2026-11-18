@@ -188,7 +188,11 @@ describe('live dashboard', () => {
     expect((await fetch(endpoint('/api/runs'), { method: 'GET' })).status).toBe(405);
     const html = await request('/');
     expect(html.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
-    expect(await html.text()).toContain('Your agent. Under attack.');
+    const page = await html.text();
+    expect(page).toContain('Your agent. Under attack.');
+    // An inline icon stops the browser requesting /favicon.ico without the token (a 403).
+    expect(page).toMatch(/<link rel="icon" href="data:[^"]*">/);
+    expect(html.headers.get('content-security-policy')).toContain('img-src \'self\' data:');
     await request('/api/runs', config);
     const stream = await eventReader(await request(`/api/runs/${manager.run!.id}/events`));
     await stream.until((e) => e.type === 'run.failed'); await stream.cancel();

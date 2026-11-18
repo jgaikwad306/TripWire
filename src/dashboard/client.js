@@ -164,10 +164,21 @@
   function storyStep(number, label, body, seen, cls = '', tag = '') {
     return `<div class="story-step ${seen ? 'seen' : ''} ${cls}"><span class="step-number">${number}</span><div><div class="step-label">${h(label)}<span class="step-state">${h(tag)}</span></div><div class="step-body">${body}</div></div></div>`;
   }
+  const quoteFor = (state, request) => state.quotes.find((x) => x.id === request?.intentId) || state.quotes.at(-1);
+  const offQuote = (state, request) => {
+    const quote = quoteFor(state, request);
+    return Boolean(quote) && (String(quote.payTo).toLowerCase() !== String(request.payTo).toLowerCase() || String(quote.amount) !== String(request.amount));
+  };
+  // An agent that falls for an attack often buys honestly afterwards. The request that
+  // departs from its quote is the attack, so it leads; otherwise show the latest request.
+  function primarySendRequest(state) {
+    const sends = state.requests.filter((x) => x.side === 'send').map((x) => x.request);
+    return sends.find((request) => offQuote(state, request)) || sends.at(-1);
+  }
   function renderColumn(phase, s) {
     const state = row(phase, s.id), guarded = phase === 'guarded', honest = s.category === 'honest', receive = s.category === 'receive';
-    const q = state.quotes.at(-1), sendRequest = state.requests.filter((x) => x.side === 'send').at(-1)?.request, receipt = state.requests.filter((x) => x.side === 'receive').at(-1)?.request;
-    const relevantQuote = state.quotes.find((x) => x.id === sendRequest?.intentId) || q;
+    const q = state.quotes.at(-1), sendRequest = primarySendRequest(state), receipt = state.requests.filter((x) => x.side === 'receive').at(-1)?.request;
+    const relevantQuote = quoteFor(state, sendRequest);
     const attackText = state.events.filter((e) => e.type === 'transcript' && e.data.entry.kind === 'attacker').map((e) => e.data.entry.text);
     const checkout = state.calls.find((c) => c.name === 'merchant_request' && c.result?.status === 402)?.result?.body;
     let payload = '', action = '', response = '', final = '';
@@ -192,7 +203,7 @@
     } else if (sendRequest) {
       action = `<p>Requested <strong>${h(units(sendRequest.amount))} USDC</strong> to <strong class="${addr(sendRequest.payTo, state) === 'Attacker wallet' ? 'coral' : ''}">${h(addr(sendRequest.payTo, state))}</strong>.</p>`;
       if (relevantQuote) {
-        const changed = relevantQuote.payTo.toLowerCase() !== sendRequest.payTo.toLowerCase() || String(relevantQuote.amount) !== String(sendRequest.amount);
+        const changed = offQuote(state, sendRequest);
         action += `<dl class="comparison-fields"><div><dt>Quoted</dt><dd>${h(units(relevantQuote.amount))} USDC → ${h(addressDetail(relevantQuote.payTo, state))}</dd></div><div class="${changed ? 'changed' : ''}"><dt>Requested</dt><dd>${h(units(sendRequest.amount))} USDC → ${h(addressDetail(sendRequest.payTo, state))}</dd></div></dl>`;
       }
       const attempts = state.requests.filter((x) => x.side === 'send').length;
