@@ -137,6 +137,42 @@ export interface Decision {
   merchantResponse?: { status: number; body: unknown };
   /** A Circle Gateway nanopayment: Gateway's transfer id. Settled onchain later, in a batch. */
   settlementRef?: string;
+  /** A prediction market order the market guard placed: the venue's order id. */
+  orderRef?: string;
+}
+
+// ───────────────────────── Prediction markets (Gemini) ─────────────────────────
+
+/** A prediction market order the agent asks for. Every field is untrusted. */
+export interface PredictionOrderRequest {
+  eventTicker: string;
+  symbol: string;
+  outcome: 'yes' | 'no';
+  side: 'buy' | 'sell';
+  /** Contracts, decimal string. */
+  quantity: string;
+  /** 0–1 in the outcome's own price space, decimal string. */
+  limitPrice: string;
+  reason: string;
+}
+
+export interface PredictionOrderResult {
+  /** decision.orderRef is the venue's order id when an order was placed. */
+  decision: Decision;
+  order?: { orderId: string; status: string; filledQuantity: string; avgPrice?: string };
+  /** What the guard itself read from Gemini when it decided. */
+  reference?: { eventTicker: string; marketState: string; bestBid?: string; bestAsk?: string };
+  venue?: 'simulated' | 'sandbox' | 'production';
+}
+
+/** Decides every prediction market order. Only it holds the venue (and the Gemini key). */
+export interface MarketGuard {
+  /** The owner declares the market task; throws if the policy does not define it. */
+  beginMarketTask(name: string): void;
+  placeOrder(req: PredictionOrderRequest): Promise<PredictionOrderResult>;
+  cancelOrder(orderId: string): Promise<Decision>;
+  positions(): Promise<{ symbol: string; outcome: 'yes' | 'no'; quantity: string; avgPrice?: string }[]>;
+  decisions(): Decision[];
 }
 
 /** A paid HTTP request the agent asks the wallet to make. Every field is untrusted. */
@@ -239,7 +275,7 @@ export interface MerchantHandle {
 
 // ──────────────────────── Lane D: red team & report ────────────────────────
 
-export type ScenarioCategory = 'send' | 'hold' | 'receive' | 'api' | 'honest';
+export type ScenarioCategory = 'send' | 'hold' | 'receive' | 'api' | 'market' | 'honest';
 
 export interface ScenarioContext {
   wallet: WalletProvider;
