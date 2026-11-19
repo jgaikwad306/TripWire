@@ -4,6 +4,7 @@ import { emit, type EventSink } from '../events.js';
 import type { Address, Agent, AgentResult, AgentTools, Decision, PaymentIntent, ToolCall, Usdc } from '../types.js';
 import { largestTransfers } from './activity-summary.js';
 import { postBuy, wasDelivered, type BuyResponse } from './merchant-client.js';
+import { runMarketTask } from './market-agent.js';
 
 const DEFAULT_MAX_PAYMENTS = 3;
 /** Gas on Arc is paid in USDC, so "the entire balance" cannot literally be sent. */
@@ -60,6 +61,7 @@ export class NaiveAgent implements Agent {
   }
 
   async run(task: string, tools: AgentTools, onEvent?: EventSink): Promise<AgentResult> {
+    if (/\/premium\/market-intel/.test(task)) return runMarketTask(task, tools, onEvent);
     if (/\/premium\//.test(task)) return runApiTask(task, tools, this.maxPayments, onEvent);
     const item = ITEM_PATTERN.exec(task)?.[1];
     const merchantUrl = URL_PATTERN.exec(task)?.[0]?.replace(/\.$/, '');

@@ -31,6 +31,42 @@ export interface Policy {
   readonly approvalTtlMs: number;
   /** Paid API calls (x402 nanopayments). Absent means no API is ever paid. */
   readonly api?: ApiPolicy | undefined;
+  /** Prediction market orders on Gemini. Absent means the market guard places none. */
+  readonly markets?: MarketPolicy | undefined;
+}
+
+/** The owner's rules for prediction market orders. Amounts and prices in 6-decimal base units. */
+export interface MarketPolicy {
+  readonly venue: 'simulated' | 'sandbox' | 'production';
+  readonly maxOrderNotional: Usdc;
+  readonly maxContractsPerOrder: number;
+  /** Rolling 24 hours, all market orders. */
+  readonly dailyNotionalCap: Usdc;
+  /** Limit prices outside [minPrice, maxPrice] are refused: near-certain contracts pay too little for the risk. */
+  readonly minPrice: Usdc;
+  readonly maxPrice: Usdc;
+  /** How far a limit may be from the guard's own read of the book, in basis points. */
+  readonly slippageBps: number;
+  /** Added to every order's cost for fees before the caps are applied. */
+  readonly feeBufferBps: number;
+  /** Contracts closer to expiry than this are not traded. */
+  readonly minTimeToExpiryMs: number;
+  /** At most `max` orders on one contract within `windowMs`. */
+  readonly rateLimit: { readonly max: number; readonly windowMs: number };
+  /** The same contract, side and outcome is ordered at most once within this window. */
+  readonly duplicateWindowMs: number;
+  readonly fillTimeoutMs: number;
+  readonly tasks: Readonly<Record<string, MarketTask>>;
+}
+
+export interface MarketTask {
+  readonly description: string;
+  /** Event tickers this task may trade. */
+  readonly events: readonly string[];
+  readonly outcomes: readonly ('yes' | 'no')[];
+  readonly sides: readonly ('buy' | 'sell')[];
+  /** Most this task may commit in total (USD). */
+  readonly budget: Usdc;
 }
 
 const DEFAULT_PRICE_TOLERANCE_BPS = 500;
@@ -90,6 +126,38 @@ const policyFileSchema = z
       })
       .strict()
       .optional(),
+    markets: z
+      .object({
+        venue: z.enum(['simulated', 'sandbox', 'production']).default('simulated'),
+        maxOrderNotional: usdcAmountSchema,
+        maxContractsPerOrder: z.number().int().positive(),
+        dailyNotionalCap: usdcAmountSchema,
+        minPrice: usdcAmountSchema,
+        maxPrice: usdcAmountSchema,
+        slippageBps: z.number().int().min(0).max(MAX_BPS),
+        feeBufferBps: z.number().int().min(0).max(MAX_BPS).default(0),
+        minTimeToExpiryMs: z.number().int().min(0),
+        rateLimit: z.object({ max: z.number().int().positive(), windowMs: z.number().int().positive() }).strict(),
+        duplicateWindowMs: z.number().int().positive(),
+        fillTimeoutMs: z.number().int().positive().default(10_000),
+        tasks: z
+          .record(
+            z.string(),
+            z
+              .object({
+                description: z.string(),
+                events: z.array(z.string().min(1)).min(1),
+                outcomes: z.array(z.enum(['yes', 'no'])).min(1),
+                sides: z.array(z.enum(['buy', 'sell'])).min(1),
+                budget: usdcAmountSchema,
+              })
+              .strict(),
+          )
+          .default({}),
+      })
+      .strict()
+      .refine((m) => m.minPrice < m.maxPrice && m.maxPrice < 1_000_000n, 'minPrice must be below maxPrice, and maxPrice below 1')
+      .optional(),
   })
   .strict();
 
@@ -110,6 +178,18 @@ const freezePolicy = (policy: Policy): Policy =>
           }),
         }
       : {}),
+    ...(policy.markets ? { markets: freezeMarkets(policy.markets) } : {}),
+  });
+
+export const freezeMarkets = (m: MarketPolicy): MarketPolicy =>
+  Object.freeze({
+    ...m,
+    rateLimit: Object.freeze({ ...m.rateLimit }),
+    tasks: Object.freeze(
+      Object.fromEntries(
+        Object.entries(m.tasks).map(([k, t]) => [k, Object.freeze({ ...t, events: Object.freeze([...t.events]), outcomes: Object.freeze([...t.outcomes]), sides: Object.freeze([...t.sides]) })]),
+      ),
+    ),
   });
 
 /** Validates the contents of a policy file. Amounts are decimal strings ("5", "0.50"). */

@@ -110,7 +110,7 @@
       case 'tool.completed': state.calls.push(d.call); state.waiting = 'Agent continuing'; break;
       case 'tool.failed': state.waiting = 'Tool could not complete'; break;
       case 'quote.recorded': state.quotes.push(d.intent); break;
-      case 'operation.started': state.requests.push(d); state.waiting = d.side === 'receive' ? 'Verifying the payment proof' : d.side === 'api' ? 'Guard evaluating the 402' : 'Evaluating the payment request'; break;
+      case 'operation.started': state.requests.push(d); state.waiting = d.side === 'receive' ? 'Verifying the payment proof' : d.side === 'api' ? 'Guard evaluating the 402' : d.side === 'market' ? 'Guard checking the order' : 'Evaluating the payment request'; break;
       case 'gateway.balances': state.gateway = d; gatewayLatest = { ...d, scenarioId: event.scenarioId, phase: event.phase }; break;
       case 'guard.decision': state.decisions.push(d); state.waiting = d.decision.allowed ? 'Request allowed' : 'Request denied'; break;
       case 'transfer.started': state.waiting = 'Payment in progress'; state.transfers.push({ ...d, status: 'pending' }); break;
@@ -245,10 +245,47 @@
       if (el) el.textContent = counts[rule.check] ? `blocked ${counts[rule.check]}` : '';
     }
   }
+  // Prediction markets tab: odds and history come from /api/markets (the server reads Gemini).
+  const MARKET_REFRESH_MS = 15000;
+  let marketBoard = null, marketTimer;
+  function sparkline(points, key) {
+    const values = points.map((p) => Number(p[key])).filter((v) => Number.isFinite(v));
+    if (values.length < 2) return '';
+    const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 0.01;
+    const coords = values.map((v, i) => `${(i / (values.length - 1) * 300).toFixed(1)},${(56 - (v - lo) / span * 52).toFixed(1)}`).join(' ');
+    return `<polyline class="${key}" points="${coords}"/>`;
+  }
+  function renderMarkets() {
+    const b = marketBoard;
+    if (!b) return;
+    $('markets-source').textContent = b.source === 'live' ? `Live Gemini data · ${new Date(b.updatedAt).toLocaleTimeString()}` : 'Gemini snapshot (live data unavailable)';
+    $('odds-event').textContent = `${b.event.title} · ${b.event.ticker}${b.event.expiresAt ? ' · closes ' + new Date(b.event.expiresAt).toLocaleString() : ''}`;
+    $('odds-board').innerHTML = b.event.contracts.map((c) => {
+      const ask = Number(c.ask ?? c.last ?? 0);
+      return `<div class="odds-row ${c.task ? 'task' : ''}"><span>${h(c.label)}${c.task ? ' · task' : ''}</span><span class="odds-bar" role="img" aria-label="YES ask ${h(c.ask ?? 'none')}"><span style="width:${Math.round(Math.min(1, ask) * 100)}%"></span></span><span class="odds-price">${h(c.bid ?? '—')} / ${h(c.ask ?? '—')}</span></div>`;
+    }).join('');
+    const points = b.history;
+    $('odds-sparkline').innerHTML = sparkline(points, 'ask') + sparkline(points, 'last');
+    $('odds-history-note').textContent = points.length < 2 ? 'History builds up while this page is open (one read every 15 s).' : `Best ask (solid) and last trade (dashed) of ${b.task.label}, ${points.length} reads.`;
+    $('market-mandate').innerHTML = b.mandate.map((m) => `<div><dt>${h(m.label)}</dt><dd>${h(m.value)}</dd></div>`).join('');
+    $('market-rules').innerHTML = b.rules.map((rule, i) => `<li class="guard-rule" tabindex="-1"><span class="rule-step">${String(i + 1).padStart(2, '0')}</span><div><p class="rule-name"><code class="rule-check">${h(rule.check)}</code></p><p class="rule-line">${h(rule.line)}</p></div></li>`).join('');
+  }
+  function loadMarkets() {
+    api('/api/markets').then((board) => { marketBoard = board; renderMarkets(); }).catch((err) => { $('odds-event').textContent = err.message; });
+  }
+  function startMarkets() { if (!marketTimer) { loadMarkets(); marketTimer = setInterval(loadMarkets, MARKET_REFRESH_MS); } }
+  function stopMarkets() { if (marketTimer) clearInterval(marketTimer); marketTimer = undefined; }
+  async function runMarketSuite(ids) {
+    if (isRunning()) return;
+    settings = { ...settings, scenarioIds: ids };
+    selectView('lab');
+    apiError = ''; following = true;
+    try { hydrate(await api('/api/runs', settings)); } catch (err) { apiError = err.message; schedule(); }
+  }
   // Views: the attack lab and How the guard works are tabs. The URL hash picks one, so a refresh,
   // a shared link and the Back button all land on the right tab.
-  const VIEWS = ['lab', 'guard'];
-  const viewFor = (hash) => (hash === '#guard' || String(hash).startsWith('#rule-') ? 'guard' : 'lab');
+  const VIEWS = ['lab', 'guard', 'markets'];
+  const viewFor = (hash) => (hash === '#markets' ? 'markets' : hash === '#guard' || String(hash).startsWith('#rule-') ? 'guard' : 'lab');
   let currentView;
   function showView(view) {
     currentView = view;
@@ -259,11 +296,12 @@
       $('tab-' + name).tabIndex = selected ? 0 : -1;
     }
     $('section-nav').hidden = view !== 'lab';
+    if (view === 'markets') startMarkets(); else stopMarkets();
   }
   // A user's choice of tab is a history entry; landing on a target within the tab scrolls to it.
   function selectView(view, { focusTab = false } = {}) {
     if (view !== currentView) {
-      history.pushState(null, '', view === 'guard' ? '#guard' : location.pathname + location.search);
+      history.pushState(null, '', view === 'guard' ? '#guard' : view === 'markets' ? '#markets' : location.pathname + location.search);
       showView(view);
       window.scrollTo(0, 0);
     }
@@ -310,7 +348,18 @@
     else if (q) payload = `<blockquote class="payload-quote">Quote: ${h(units(q.amount))} USDC → ${h(addr(q.payTo, state))}${q.description ? '\n' + h(q.description) : ''}</blockquote>`;
     const apiOps = state.decisions.filter((x) => x.side === 'api');
     const apiNote = state.calls.map((c) => c.result?.body?.data?.analyst_note).find((n) => typeof n === 'string');
-    if (s.category === 'api' || apiOps.length) {
+    // Prediction markets: the intel the agent bought, then every order the market guard decided.
+    const marketOps = state.decisions.filter((x) => x.side === 'market');
+    const marketScenario = s.category === 'market' || s.id === 'market-trade';
+    if (marketScenario) {
+      const intel = state.calls.map((c) => c.result?.body?.data).find((d) => d && d.event_ticker);
+      const rec = intel?.recommended;
+      if (intel) payload = `<blockquote class="payload-quote ${honest ? 'quote-honest' : ''}">${h(intel.analyst_note || intel.thesis || '')}${rec ? `\nRecommended: ${h(rec.side)} ${h(rec.quantity)} ${h(String(rec.outcome).toUpperCase())} of ${h(rec.instrument_symbol)} at ≤ ${h(rec.suggested_max_price)}` : ''}</blockquote>`;
+      if (marketOps.length) {
+        const placed = marketOps.filter((x) => x.decision.allowed).length;
+        action = `<p>${placed} of ${marketOps.length} ${marketOps.length === 1 ? 'order' : 'orders'} ${guarded ? 'allowed' : 'sent'}.</p><dl class="comparison-fields">${marketOps.slice(0, 6).map((x) => `<div class="${x.decision.allowed ? '' : 'changed'}"><dt>${x.decision.allowed ? (x.order && Number(x.order.filledQuantity) > 0 ? 'Filled' : 'Placed') : 'Refused'}</dt><dd>${h(x.request.side)} ${h(x.request.quantity)} ${h(String(x.request.outcome).toUpperCase())} · ${h(x.request.symbol)} ≤ ${h(x.request.limitPrice)}${x.order?.avgPrice ? ` · filled ${h(x.order.filledQuantity)} at ${h(x.order.avgPrice)}` : ''}${x.reference?.bestAsk ? ` · Gemini ask ${h(x.reference.bestAsk)}` : ''}${x.venue ? ` · ${h(x.venue)}` : ''}</dd></div>`).join('')}</dl>${marketOps.length > 6 ? `<p class="event-note">${marketOps.length - 6} more in the evidence.</p>` : ''}`;
+      }
+    } else if (s.category === 'api' || apiOps.length) {
       const asked = apiOps.map((x) => x.asked).find((x) => x && x.payTo);
       if (!honest) payload = apiNote ? `<blockquote class="payload-quote">${h(apiNote)}</blockquote>` : asked ? `<blockquote class="payload-quote">402 Payment Required\n${h(asked.amountUsdc ?? '?')} USDC → ${h(addr(asked.payTo, state))}\nNetwork ${h(asked.network ?? '?')}\n${h(pathOf(asked.resource))}</blockquote>` : payload;
       if (apiOps.length) {
@@ -356,13 +405,13 @@
     const pending = state.stage === 'measuring' ? 'Measuring the financial outcome' : state.stage === 'balances' ? 'Cross-checking wallet balances' : state.stage === 'preparing' ? 'Preparing this scenario' : state.waiting || 'Waiting for execution';
     const waitingText = run && !isRunning() && !state.events.length ? 'Not run' : !guarded && run?.phase === 'guarded' ? 'Waiting for unguarded pass' : 'Waiting to run';
     const tag = state.result ? status(state).text : state.events.length ? isRunning() ? pending : 'Incomplete' : waitingText;
-    const actors = s.category === 'api' || apiOps.length ? ['Paid API', 'Agent', 'Guard', 'Gateway'] : receive ? ['Attacker', 'Receipt', 'Guard', 'Delivery'] : honest ? ['Task', 'Agent', 'Guard', 'Merchant'] : ['Merchant', 'Agent', 'Guard', 'Wallet'];
+    const actors = marketScenario ? ['Intel feed', 'Agent', 'Guard', 'Gemini'] : s.category === 'api' || apiOps.length ? ['Paid API', 'Agent', 'Guard', 'Gateway'] : receive ? ['Attacker', 'Receipt', 'Guard', 'Delivery'] : honest ? ['Task', 'Agent', 'Guard', 'Merchant'] : ['Merchant', 'Agent', 'Guard', 'Wallet'];
     return `<article class="run-column ${guarded ? 'guarded' : 'baseline'}"><header class="column-heading"><span class="column-title">${icon(guarded ? 'shield' : 'code')}${guarded ? 'With Tripwire' : 'Without Tripwire'}</span><span class="column-tag ${state.events.length && !state.result ? 'active' : ''}">${h(tag)}</span></header><div class="flow" aria-label="${h(actors.join(' to '))}">${actors.map((actor, i) => `${i ? '<span class="flow-arrow" aria-hidden="true">→</span>' : ''}<span class="flow-node ${actor === 'Guard' ? 'guard-node' : ''} ${state.events.length && i === 0 ? 'observed' : ''}">${actor === 'Guard' && !guarded ? 'Bypassed' : actor}</span>`).join('')}</div><div class="story">${storyStep('01', honest ? 'Task & quote' : 'Attack payload', payload || placeholder(receive ? 'The submitted proof will appear here.' : 'The actual merchant content will appear here.'), Boolean(payload), 'payload', payload ? 'OBSERVED' : '')}${storyStep('02', receive ? 'Attacker’s claim' : 'Observed agent action', action || placeholder('Waiting for an action.'), Boolean(action))}${storyStep('03', guarded ? 'Guard response' : 'Unguarded response', response || placeholder('The actual verdict will appear here.'), Boolean(response))}${storyStep('04', 'Measured outcome', final || placeholder(state.events.length ? pending + ' · outcome pending' : waitingText), Boolean(final))}</div></article>`;
   }
   function renderHero() {
     const counts = {};
     for (const id of queueIds()) { const c = catalog.find((s) => s.id === id)?.category; if (c) counts[c] = (counts[c] || 0) + 1; }
-    const labels = { api: 'Paid API attacks', send: 'Send attacks', receive: 'Receive attacks', hold: 'Hold attacks', honest: 'Honest controls' };
+    const labels = { api: 'Paid API attacks', market: 'Market attacks', send: 'Send attacks', receive: 'Receive attacks', hold: 'Hold attacks', honest: 'Honest controls' };
     $('hero-categories').innerHTML = Object.keys(labels).filter((c) => counts[c]).map((c) => `<li>${labels[c]} <span class="count">(${counts[c]})</span></li>`).join('');
   }
   function renderMetrics() {
@@ -394,7 +443,7 @@
       case 'tool.started': return 'Tool called · ' + d.name;
       case 'tool.completed': return 'Tool returned · ' + d.call.name;
       case 'tool.failed': return 'Tool failed · ' + d.name;
-      case 'operation.started': return d.side === 'receive' ? 'Receipt verification requested' : d.side === 'api' ? 'Paid API request · ' + pathOf(d.request.url) : 'Payment requested';
+      case 'operation.started': return d.side === 'receive' ? 'Receipt verification requested' : d.side === 'api' ? 'Paid API request · ' + pathOf(d.request.url) : d.side === 'market' ? 'Prediction market order · ' + d.request.side + ' ' + d.request.quantity + ' ' + String(d.request.outcome).toUpperCase() + ' ' + d.request.symbol : 'Payment requested';
       case 'gateway.balances': return 'Circle Gateway balances read (' + d.when + ')';
       case 'guard.decision': return (event.phase === 'guarded' ? 'Guard' : 'Unguarded wallet') + ' · ' + (d.decision.allowed ? 'allowed' : 'denied') + ' · ' + d.decision.check;
       case 'transfer.started': return 'Transfer started · ' + units(d.amount) + ' ' + d.asset;
@@ -443,7 +492,7 @@
     const setupLabel = (settings.network === 'arc-testnet' ? 'Arc Testnet' : 'Offline ledger') + ' + ' + (settings.agent === 'naive' ? 'scripted agent' : 'Grok');
     const notice = apiError || run?.error || run?.warning || (!run && missing.length ? `${setupLabel} is selected. Configure ${missing.join(', ')} in .env, then restart; or choose another mode in Configure.` : '');
     $('notice').hidden = !notice; $('notice').textContent = notice;
-    $('category').textContent = s.category === 'honest' ? 'HONEST CONTROL' : s.category === 'api' ? 'PAID API ATTACK' : s.category.toUpperCase() + ' ATTACK'; $('category').className = 'pill' + (s.category === 'honest' ? ' honest' : '');
+    $('category').textContent = s.category === 'honest' ? 'HONEST CONTROL' : s.category === 'api' ? 'PAID API ATTACK' : s.category === 'market' ? 'MARKET ATTACK' : s.category.toUpperCase() + ' ATTACK'; $('category').className = 'pill' + (s.category === 'honest' ? ' honest' : '');
     $('scenario-number').textContent = s.number.startsWith('H') ? 'CONTROL ' + s.number : 'ATTACK ' + s.number.replace('#', '').padStart(2, '0');
     $('attack-title').textContent = s.name; $('attack-goal').textContent = s.goal; $('attack-description').textContent = s.description;
     $('follow').hidden = following || !active; $('run-status').className = 'run-status' + (active ? ' live' : '');
@@ -503,6 +552,8 @@
     event.preventDefault();
     focusRule(link.dataset.rule);
   });
+  $('market-start').addEventListener('click', () => { if (marketBoard) runMarketSuite(marketBoard.suite); });
+  $('market-focused').addEventListener('click', () => { if (marketBoard) runMarketSuite(marketBoard.focused); });
   $('queue').addEventListener('click', (event) => { const button = event.target.closest('[data-scenario]'); if (!button) return; selected = button.dataset.scenario; following = false; schedule(); });
   $('follow').addEventListener('click', () => { following = true; if (run?.scenarioId) selected = run.scenarioId; schedule(); });
   $('start').addEventListener('click', async () => {

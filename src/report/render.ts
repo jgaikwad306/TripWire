@@ -1,6 +1,7 @@
 import { explorerTxUrl, formatUsdc } from '../constants.js';
 import type { Report, ScenarioCategory, ScenarioResult, TxHash } from '../types.js';
 import type { Network, SavedReport } from './store.js';
+import { isMarketResult } from '../redteam/score.js';
 
 const TITLE = 'Agent Wallet Guard: red-team report';
 const SCORING_NOTE =
@@ -17,6 +18,7 @@ const CATEGORY_LABEL: Record<ScenarioCategory, string> = {
   hold: 'hold',
   receive: 'receive',
   api: 'paid API (nanopayments)',
+  market: 'markets (Gemini)',
   honest: 'honest (usability)',
 };
 const CATEGORIES = Object.keys(CATEGORY_LABEL) as ScenarioCategory[];
@@ -32,6 +34,9 @@ const attacksOf = (report: Report): ScenarioResult[] => report.results.filter((r
 const unknownLoss = (report: Report): boolean => report.results.some((r) => r.measurementStatus === 'unknown');
 const scoreText = (report: Report): string => unknownLoss(report) ? 'unknown — score withheld' : `${report.overall} / 100`;
 const lossText = (report: Report): string => formatUsdc(report.usdcLost) + (unknownLoss(report) ? ' measured + unknown' : '');
+/** Gemini losses are USD, so they get their own line and never join the USDC total. */
+const riskText = (report: Report): string => formatUsdc(report.usdAtRisk ?? 0n);
+const hasMarkets = (...reports: Report[]): boolean => reports.some((r) => r.usdAtRisk !== undefined);
 const attacksStopped = (report: Report): string =>
   `${attacksOf(report).filter((r) => r.passed).length} / ${attacksOf(report).length}`;
 const honestCompleted = (report: Report): string => `${report.honestCompleted} / ${report.honestTotal}`;
@@ -40,7 +45,10 @@ const honestCompleted = (report: Report): string => `${report.honestCompleted} /
 export function describeResult(r: ScenarioResult): string {
   if (r.measurementStatus === 'unknown') return `loss unknown: ${r.error ?? 'outcome could not be measured'}`;
   // A scenario can lose money and then throw; the loss must stay visible.
-  if (r.usdcLost > 0n) return `lost ${formatUsdc(r.usdcLost)} USDC${r.error ? ` (also failed: ${r.error})` : ''}`;
+  if (r.usdcLost > 0n) {
+    const loss = isMarketResult(r) ? `${formatUsdc(r.usdcLost)} USD at risk on Gemini` : `lost ${formatUsdc(r.usdcLost)} USDC`;
+    return `${loss}${r.error ? ` (also failed: ${r.error})` : ''}`;
+  }
   if (r.error) return `error: ${r.error}`;
   const denial = r.decisions.find((d) => !d.allowed);
   if (r.stoppedBy === 'agent') return 'nothing lost: the agent declined, so the guard was not tested';
@@ -59,6 +67,7 @@ export function renderTerminal({ network, report, partial }: SavedReport): strin
     '',
     row('Score', partial ? 'partial run — score withheld' : scoreText(report)),
     row('USDC lost', lossText(report)),
+    ...(hasMarkets(report) ? [row('USD at risk (Gemini)', riskText(report))] : []),
     row('Attacks stopped', attacksStopped(report)),
     row('Honest purchases', `${honestCompleted(report)} completed`),
     '',
@@ -80,6 +89,7 @@ export function renderComparison(guarded: Report, baseline: Report): string {
     row('', 'guard ON', 'guard OFF'),
     row('Score', scoreText(guarded), scoreText(baseline)),
     row('USDC lost', lossText(guarded), lossText(baseline)),
+    ...(hasMarkets(guarded, baseline) ? [row('USD at risk (Gemini)', riskText(guarded), riskText(baseline))] : []),
     row('Attacks stopped', attacksStopped(guarded), attacksStopped(baseline)),
     row('Honest purchases', honestCompleted(guarded), honestCompleted(baseline)),
   ].join('\n');
@@ -123,6 +133,7 @@ export function renderMarkdown({ network, report, partial }: SavedReport): strin
     partial ? '## Partial run — score withheld' : `## Score: ${scoreText(report)}`,
     '',
     `- USDC lost: ${lossText(report)}`,
+    ...(hasMarkets(report) ? [`- USD at risk on Gemini (prediction markets, not USDC): ${riskText(report)}`] : []),
     `- Attacks stopped: ${attacksStopped(report)}`,
     `- Honest purchases completed: ${honestCompleted(report)}`,
     '',
