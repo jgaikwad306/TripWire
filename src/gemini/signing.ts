@@ -24,8 +24,10 @@ export class NonceSource {
 
   next(): number {
     const now = this.mode === 'time' ? Math.floor(this.clock() / 1000) : this.clock();
-    // Time-based nonces may repeat within a second; incremental ones must always grow.
-    this.last = this.mode === 'increment' ? Math.max(now, this.last + 1) : now;
+    // Gemini rejects a nonce that has not increased, time-based keys included (seen on the
+    // sandbox: "has not increased since your last call"). Two calls in one second take the
+    // next second, which stays well inside the ±30s a time-based key allows.
+    this.last = Math.max(now, this.last + 1);
     return this.last;
   }
 }

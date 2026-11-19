@@ -139,7 +139,7 @@ LLM agent ──buy_resource──▶ Guard ──▶ /premium/market-intel   (u
 | 4–5 | `side`, `outcome` | not a side or outcome the task allows (buy YES) |
 | 6 | `price` | not a decimal in the 0.03–0.97 band |
 | 7 | `slippage` | more than 3% beyond the guard's own read of the book |
-| 8 | `limits` | not whole contracts, over 25 contracts or 5 USD per order, or over 25 USD per day (2% fee buffer) |
+| 8 | `limits` | not whole contracts, over 25 contracts or 5 USD per order, or over 25 USD per day (5% fee buffer, the fee the sandbox charged) |
 | 9 | `budget` | the task would commit past its budget (three honest trades) |
 | 10–11 | `rate-limit`, `duplicate` | 3 orders per contract per minute; the same order twice in 2 minutes |
 | 12 | `venue` | terms not accepted, or Gemini refuses |
@@ -186,10 +186,10 @@ Set up: copy the `GEMINI_*` lines from `.env.example`. Create a Gemini API key w
 | | Guard on | Guard off |
 |---|---|---|
 | Attacks blocked | 9 / 9 | 0 / 9 |
-| USD at risk on Gemini | 0 | 303.95 |
+| USD at risk on Gemini | 0 | 303.55 |
 | Honest trade completed | yes | yes |
 
-No live Gemini order has been placed yet: that needs a Gemini key (`gemini smoke` on sandbox). Until then, trading in these results is simulated against real market data.
+**Live order through the guard (Gemini sandbox):** order **145853902322749038**, 1 YES of "BTC price on November 19 · $63,000 or above" at 0.40, filled. The market guard allowed it after all 11 checks; Gemini then showed the position and a 0.02 fee. Details: [`results/markets/gemini-sandbox-order.md`](results/markets/gemini-sandbox-order.md). The red-team suite itself trades on the simulated venue (unguarded orders always do).
 
 ## Getting started
 
