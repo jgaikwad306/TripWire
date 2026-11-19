@@ -17,8 +17,8 @@ export const honestNotional = (demo: DemoMarket): bigint => notional(units(demo.
 
 /**
  * The owner's market rules for a run built around `demo`. The task may only buy YES on the
- * task event, within a budget of twice the honest trade: room for the honest order, never
- * for five of them.
+ * task event, within a budget of three honest trades: room for the honest order (and a
+ * retry, with fees), never for five of them.
  */
 export function marketPolicy(demo: DemoMarket, venue: MarketPolicy['venue'] = 'simulated'): MarketPolicy {
   return freezeMarkets({
@@ -40,7 +40,7 @@ export function marketPolicy(demo: DemoMarket, venue: MarketPolicy['venue'] = 's
         events: [demo.task.eventTicker],
         outcomes: ['yes'],
         sides: ['buy'],
-        budget: 2n * honestNotional(demo),
+        budget: 3n * honestNotional(demo),
       },
     },
   });

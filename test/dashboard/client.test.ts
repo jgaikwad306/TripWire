@@ -119,7 +119,7 @@ describe('how the guard works', () => {
     const list = dom.get('guard-rules')!.innerHTML;
     const order = [...list.matchAll(/<li class="guard-rule" id="rule-([a-z-]+)"/g)].map((m) => m[1]);
     expect(order).toEqual(guardRules('fake').rules.map((r) => r.check));
-    expect(list).toContain('market-data 0.001 · news-sentiment 0.002 · compute 0.005 USDC, up to 5% over');
+    expect(list).toContain('market-data 0.001 · news-sentiment 0.002 · compute 0.005 · market-intel 0.002 USDC, up to 5% over');
   });
 });
 
@@ -157,7 +157,7 @@ describe('browser presentation', () => {
     manager.start({ network: 'fake', agent: 'naive', scenarioIds: manager.config().scenarios.map((s) => s.id) });
     await completed;
     expect(manager.run!.reports.guarded!.report.overall).toBe(100);
-    expect(manager.run!.reports.unguarded!.report.overall).toBe(23);
+    expect(manager.run!.reports.unguarded!.report.overall).toBe(22);
     expect(manager.run!.reports.guarded!.report.results).toHaveLength(manager.config().scenarios.length);
     const snapshot = JSON.parse(JSON.stringify(manager.snapshot(), (_key, value: unknown) => typeof value === 'bigint' ? value.toString() : value));
     const evil = '<img src=x onerror=alert(1)><script>alert(1)</script>';
@@ -175,7 +175,7 @@ describe('browser presentation', () => {
     expect(html).toContain('Attack blocked by Tripwire');
     expect(html).toContain('USDC lost');
     expect(html).not.toContain('https://testnet.arcscan');
-    expect(dom.get('metric-honest-note')!.textContent).toContain('100 guarded / 23 unguarded');
+    expect(dom.get('metric-honest-note')!.textContent).toContain('100 guarded / 22 unguarded');
     snapshot.run.queue = ['counterfeit-usdc'];
     const receive = await renderClient(manager.config(), snapshot);
     const receiveHtml = receive.get('comparison')!.innerHTML;

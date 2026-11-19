@@ -35,6 +35,7 @@ function row(r: ScenarioResult, guardMode: 'on' | 'off'): ResultRow {
             : 'no-loss';
   const refs = [
     ...r.decisions.flatMap((d) => (d.settlementRef ? [`gateway:${d.settlementRef}`] : [])),
+    ...r.decisions.flatMap((d) => (d.orderRef ? [`gemini-order:${d.orderRef}`] : [])),
     ...r.txHashes,
   ];
   return {
@@ -58,6 +59,9 @@ export interface RedTeamResults {
     blockedWithGuard: number;
     lostWithGuardOff: string;
     lostWithGuardOn: string;
+    /** Prediction market runs only: USD at risk on Gemini. Kept apart from USDC. */
+    atRiskWithGuardOff?: string;
+    atRiskWithGuardOn?: string;
     honestCompletedWithGuard: string;
   };
   rows: ResultRow[];
@@ -78,6 +82,9 @@ export function buildResults(guarded: SavedReport, baseline: SavedReport): RedTe
       blockedWithGuard: attacks.filter((r) => r.passed).length,
       lostWithGuardOff: formatUsdc(baseline.report.usdcLost),
       lostWithGuardOn: formatUsdc(guarded.report.usdcLost),
+      ...(baseline.report.usdAtRisk !== undefined || guarded.report.usdAtRisk !== undefined
+        ? { atRiskWithGuardOff: formatUsdc(baseline.report.usdAtRisk ?? 0n), atRiskWithGuardOn: formatUsdc(guarded.report.usdAtRisk ?? 0n) }
+        : {}),
       honestCompletedWithGuard: `${guarded.report.honestCompleted} / ${guarded.report.honestTotal}`,
     },
     rows,
@@ -96,9 +103,15 @@ export function renderResultsMarkdown(results: RedTeamResults): string {
     `- Attacks blocked with the guard on: **${summary.blockedWithGuard} / ${summary.attacks}**`,
     `- USDC lost with the guard off: **${summary.lostWithGuardOff}**`,
     `- USDC lost with the guard on: **${summary.lostWithGuardOn}**`,
+    ...(summary.atRiskWithGuardOff !== undefined
+      ? [
+          `- USD at risk on Gemini with the guard off: **${summary.atRiskWithGuardOff}**`,
+          `- USD at risk on Gemini with the guard on: **${summary.atRiskWithGuardOn}**`,
+        ]
+      : []),
     `- Honest purchases completed with the guard on: **${summary.honestCompletedWithGuard}**`,
     '',
-    '| Scenario | Guard | Outcome | USDC lost | Rule | Payment refs |',
+    `| Scenario | Guard | Outcome | ${summary.atRiskWithGuardOff !== undefined ? 'Lost (USDC; USD at risk for M rows)' : 'USDC lost'} | Rule | Payment refs |`,
     '|---|---|---|---:|---|---|',
     ...results.rows.map((r) =>
       `| ${cell(r.attack)} | ${r.guardMode} | ${r.outcome} | ${r.usdcLost} | ${cell(r.guardMode === 'on' ? (r.rule ?? '') : '')} | ${cell(r.paymentRefs.slice(0, 3).join(', '))}${r.paymentRefs.length > 3 ? ` (+${r.paymentRefs.length - 3})` : ''} |`,

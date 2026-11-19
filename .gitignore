@@ -10,3 +10,4 @@ dist/
 coverage/
 recovery_file_*.dat
 results/audit.jsonl
+results/markets/audit.jsonl
