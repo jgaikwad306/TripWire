@@ -53,7 +53,7 @@ export function renderDashboard(token: string): string {
 </defs></svg>
 <header class="site-header">
   <a class="wordmark" href="#top">Tripwire<sup>®</sup></a>
-  <div class="header-center"><div class="view-tabs" role="tablist" aria-label="Views"><button type="button" role="tab" class="view-tab" id="tab-lab" aria-controls="panel-lab" aria-selected="true">Attack lab</button><button type="button" role="tab" class="view-tab" id="tab-guard" aria-controls="panel-guard" aria-selected="false" tabindex="-1">How the guard works</button></div><nav class="site-nav" id="section-nav" aria-label="Sections"><a href="#scenarios">Scenarios <span class="count">(<span id="queue-count">04</span>)</span></a><a href="#evidence-section">Evidence</a><a href="#summary">Summary</a></nav></div>
+  <div class="header-center"><div class="view-tabs" role="tablist" aria-label="Views"><button type="button" role="tab" class="view-tab" id="tab-lab" aria-controls="panel-lab" aria-selected="true">Attack lab</button><button type="button" role="tab" class="view-tab" id="tab-guard" aria-controls="panel-guard" aria-selected="false" tabindex="-1">How the guard works</button><button type="button" role="tab" class="view-tab" id="tab-markets" aria-controls="panel-markets" aria-selected="false" tabindex="-1">Prediction markets</button></div><nav class="site-nav" id="section-nav" aria-label="Sections"><a href="#scenarios">Scenarios <span class="count">(<span id="queue-count">04</span>)</span></a><a href="#evidence-section">Evidence</a><a href="#summary">Summary</a></nav></div>
   <div class="header-status"><span class="setup"><strong id="sidebar-network">Arc Testnet</strong> / <span id="sidebar-agent">Grok agent</span></span><span class="connection"><span class="dot" id="connection-dot"></span><span id="connection">Connecting</span></span></div>
 </header>
 <main>
@@ -104,6 +104,19 @@ export function renderDashboard(token: string): string {
       </div>
       <ol class="guard-rules" id="guard-rules" aria-label="Rules the guard checks before paying an API, in order"></ol>
       <p class="guard-monitor">If money leaves the wallet without going through the guard, the <a id="monitor-link" href="#streams-monitor">Streams monitor freezes spending</a>.</p>
+    </section>
+  </div>
+  <div class="view-panel" id="panel-markets" role="tabpanel" aria-labelledby="tab-markets" hidden>
+    <section class="section markets-section" id="markets" aria-labelledby="markets-title">
+      ${TRIPWIRE}<div class="section-head"><span class="index">(M)</span><h2 id="markets-title">Your agent trades. The guard decides.</h2><span class="aside" id="markets-source">Gemini Prediction Markets</span></div>
+      <p class="guard-principle">The agent pays for market intel in USDC on Arc, then trades on Gemini. The intel is where the attacks come from. The market guard holds the Gemini key, reads Gemini itself, and decides every order.</p>
+      <div class="hero-actions page-actions"><button class="button primary" id="market-start" type="button">Run market comparison<span class="arrow" aria-hidden="true"><svg><use href="#i-arrow"/></svg><svg><use href="#i-arrow"/></svg></span></button><button class="button secondary" id="market-focused" type="button">Focused: trade + 3 attacks</button></div>
+      <div class="markets-grid">
+        <article class="market-card" aria-labelledby="odds-title"><h3 id="odds-title">Live odds</h3><p class="event-note" id="odds-event">Loading Gemini market data…</p><div id="odds-board" class="odds-board"></div><figure class="odds-history"><svg id="odds-sparkline" viewBox="0 0 300 60" preserveAspectRatio="none" role="img" aria-label="Best ask and last trade of the task contract over time"></svg><figcaption id="odds-history-note">Best ask (solid) and last trade (dashed) of the task contract, read every 15 s.</figcaption></figure></article>
+        <article class="market-card" aria-labelledby="mandate-title"><h3 id="mandate-title">The mandate</h3><p class="event-note">What the owner allows this agent to trade.</p><dl id="market-mandate" class="comparison-fields"></dl></article>
+      </div>
+      <h3 class="markets-rules-title">How the market guard decides</h3>
+      <ol class="guard-rules" id="market-rules" aria-label="Rules the market guard checks before placing an order, in order"></ol>
     </section>
   </div>
     <footer class="page-footer"><span><strong>Tripwire®</strong> The agent asks. The guard decides.</span><span id="footer-network">Arc Testnet · Testnet USDC</span></footer>

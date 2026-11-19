@@ -474,5 +474,22 @@ dialog[open]{animation:dialog-in .6s var(--ease)}
   .site-header{grid-template-columns:auto minmax(0,1fr) auto}
   .header-center{justify-self:center}
 }
+/* Prediction markets tab: same tokens as the guard tab; red stays reserved for loss. */
+.markets-section{padding-bottom:var(--gap-6)}
+.markets-grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:calc(var(--gutter, 1rem) * 2);margin:var(--gap-6) 0;border-top:var(--border) solid var(--line);padding-top:var(--gap-4)}
+.market-card h3,.markets-rules-title{margin:0 0 var(--gap-2);font-size:1rem}
+.odds-board{display:grid;gap:var(--gap-1);margin-top:var(--gap-3)}
+.odds-row{display:grid;grid-template-columns:minmax(0,9rem) minmax(0,1fr) 7.5rem;gap:var(--gap-3);align-items:center;font-size:.8125rem}
+.odds-row.task{font-weight:600}
+.odds-bar{height:.5rem;background:var(--hairline);position:relative}
+.odds-bar span{position:absolute;inset:0 auto 0 0;background:var(--black)}
+.odds-price{font-family:var(--mono);font-size:.75rem;text-align:right;color:var(--muted)}
+.odds-history{margin:var(--gap-4) 0 0}
+.odds-history svg{width:100%;height:4rem;display:block;border-bottom:var(--border) solid var(--hairline)}
+.odds-history polyline{fill:none;stroke:var(--black);stroke-width:1.5;vector-effect:non-scaling-stroke}
+.odds-history polyline.last{stroke:var(--muted);stroke-dasharray:3 3}
+.odds-history figcaption{color:var(--muted);font-size:.75rem;margin-top:var(--gap-1)}
+.markets-rules-title{margin-top:var(--gap-6)}
+@media(max-width:860px){.markets-grid{grid-template-columns:1fr}.odds-row{grid-template-columns:minmax(0,7rem) minmax(0,1fr) 6.5rem}}
 @media(max-width:1200px){.header-status .setup{display:none}}
 @media(max-width:960px){.header-center .site-nav{display:none}}

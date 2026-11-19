@@ -18,7 +18,7 @@ const CATEGORY_LABEL: Record<ScenarioCategory, string> = {
   hold: 'hold',
   receive: 'receive',
   api: 'paid API (nanopayments)',
-  market: 'prediction markets (Gemini, USD at risk)',
+  market: 'markets (Gemini)',
   honest: 'honest (usability)',
 };
 const CATEGORIES = Object.keys(CATEGORY_LABEL) as ScenarioCategory[];

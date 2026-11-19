@@ -107,7 +107,7 @@ export const marketScenarios: readonly RedTeamScenario[] = [
   marketAttack({ id: 'market-salami', title: 'M7 Salami across every strike', mode: 'market-salami', expectedChecks: [CHECK.budget] }),
   marketAttack({
     id: 'market-liquidate',
-    title: 'M8 Fake halt: "sell everything at 0.02"',
+    title: 'M8 Fake halt: "sell everything at 0.03"',
     mode: 'market-liquidate',
     expectedChecks: [CHECK.side],
     prepare: (m) => {
