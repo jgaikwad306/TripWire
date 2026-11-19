@@ -1,0 +1,734 @@
+{
+  "capturedAt": "2026-11-19T02:44:15.016Z",
+  "source": "https://api.gemini.com",
+  "events": [
+    {
+      "ticker": "BTC2611192200",
+      "title": "BTC price on November 19",
+      "status": "active",
+      "type": "categorical",
+      "category": "Crypto",
+      "expiresAt": "2026-11-19T22:00:00.000Z",
+      "contracts": [
+        {
+          "ticker": "HI61500",
+          "label": "$61,500 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI61500",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.72",
+          "bestAsk": "0.77",
+          "lastTradePrice": "0.72"
+        },
+        {
+          "ticker": "HI61750",
+          "label": "$61,750 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI61750",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.67",
+          "bestAsk": "0.72"
+        },
+        {
+          "ticker": "HI62000",
+          "label": "$62,000 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI62000",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.62",
+          "bestAsk": "0.67",
+          "lastTradePrice": "0.77"
+        },
+        {
+          "ticker": "HI62250",
+          "label": "$62,250 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI62250",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.58",
+          "bestAsk": "0.61",
+          "lastTradePrice": "0.61"
+        },
+        {
+          "ticker": "HI62500",
+          "label": "$62,500 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI62500",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.51",
+          "bestAsk": "0.52",
+          "lastTradePrice": "0.41"
+        },
+        {
+          "ticker": "HI62750",
+          "label": "$62,750 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI62750",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.46",
+          "bestAsk": "0.5",
+          "lastTradePrice": "0.47"
+        },
+        {
+          "ticker": "HI63000",
+          "label": "$63,000 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI63000",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.39",
+          "bestAsk": "0.43",
+          "lastTradePrice": "0.41"
+        },
+        {
+          "ticker": "HI63250",
+          "label": "$63,250 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI63250",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.34",
+          "bestAsk": "0.38",
+          "lastTradePrice": "0.34"
+        },
+        {
+          "ticker": "HI63500",
+          "label": "$63,500 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI63500",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.28",
+          "bestAsk": "0.33",
+          "lastTradePrice": "0.39"
+        },
+        {
+          "ticker": "HI63750",
+          "label": "$63,750 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611192200-HI63750",
+          "expiresAt": "2026-11-19T22:00:00.000Z",
+          "bestBid": "0.23",
+          "bestAsk": "0.29"
+        }
+      ]
+    },
+    {
+      "ticker": "NBA-2611190000-MIL-MIA-T",
+      "title": "Milwaukee vs Miami: Total Points",
+      "status": "active",
+      "type": "categorical",
+      "category": "Sports",
+      "expiresAt": "2026-11-20T12:00:00.000Z",
+      "contracts": [
+        {
+          "ticker": "O256",
+          "label": "More than 256.5 points scored",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-NBA-2611190000-MIL-MIA-T-O256",
+          "expiresAt": "2026-11-20T12:00:00.000Z",
+          "bestBid": "0.85",
+          "bestAsk": "0.88"
+        },
+        {
+          "ticker": "O258",
+          "label": "More than 258.5 points scored",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-NBA-2611190000-MIL-MIA-T-O258",
+          "expiresAt": "2026-11-20T12:00:00.000Z",
+          "bestBid": "0.75",
+          "bestAsk": "0.78"
+        },
+        {
+          "ticker": "O260",
+          "label": "More than 260.5 points scored",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-NBA-2611190000-MIL-MIA-T-O260",
+          "expiresAt": "2026-11-20T12:00:00.000Z",
+          "bestBid": "0.61",
+          "bestAsk": "0.67"
+        },
+        {
+          "ticker": "O262",
+          "label": "More than 262.5 points scored",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-NBA-2611190000-MIL-MIA-T-O262",
+          "expiresAt": "2026-11-20T12:00:00.000Z",
+          "bestBid": "0.48",
+          "bestAsk": "0.51"
+        },
+        {
+          "ticker": "O264",
+          "label": "More than 264.5 points scored",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-NBA-2611190000-MIL-MIA-T-O264",
+          "expiresAt": "2026-11-20T12:00:00.000Z",
+          "bestBid": "0.34",
+          "bestAsk": "0.37"
+        }
+      ]
+    },
+    {
+      "ticker": "BTC2611190300",
+      "title": "BTC price today at 10pm EST",
+      "status": "active",
+      "type": "categorical",
+      "category": "Crypto",
+      "expiresAt": "2026-11-19T03:00:00.000Z",
+      "contracts": [
+        {
+          "ticker": "HI62300",
+          "label": "$62,300 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI62300",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.93",
+          "bestAsk": "0.98"
+        },
+        {
+          "ticker": "HI62400",
+          "label": "$62,400 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI62400",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.86",
+          "bestAsk": "0.92",
+          "lastTradePrice": "0.83"
+        },
+        {
+          "ticker": "HI62500",
+          "label": "$62,500 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI62500",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.7",
+          "bestAsk": "0.77",
+          "lastTradePrice": "0.66"
+        },
+        {
+          "ticker": "HI62600",
+          "label": "$62,600 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI62600",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.41",
+          "bestAsk": "0.53",
+          "lastTradePrice": "0.41"
+        },
+        {
+          "ticker": "HI62700",
+          "label": "$62,700 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI62700",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.19",
+          "bestAsk": "0.25",
+          "lastTradePrice": "0.29"
+        },
+        {
+          "ticker": "HI62800",
+          "label": "$62,800 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI62800",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.06",
+          "bestAsk": "0.12",
+          "lastTradePrice": "0.11"
+        },
+        {
+          "ticker": "HI62900",
+          "label": "$62,900 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI62900",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.02",
+          "bestAsk": "0.05",
+          "lastTradePrice": "0.45"
+        },
+        {
+          "ticker": "HI63000",
+          "label": "$63,000 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI63000",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestBid": "0.01",
+          "bestAsk": "0.04"
+        },
+        {
+          "ticker": "HI63200",
+          "label": "$63,200 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI63200",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestAsk": "0.04"
+        },
+        {
+          "ticker": "HI63300",
+          "label": "$63,300 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI63300",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestAsk": "0.04"
+        },
+        {
+          "ticker": "HI63400",
+          "label": "$63,400 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI63400",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestAsk": "0.04"
+        },
+        {
+          "ticker": "HI63500",
+          "label": "$63,500 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI63500",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestAsk": "0.04"
+        },
+        {
+          "ticker": "HI63100",
+          "label": "$63,100 or above",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC2611190300-HI63100",
+          "expiresAt": "2026-11-19T03:00:00.000Z",
+          "bestAsk": "0.03"
+        }
+      ]
+    },
+    {
+      "ticker": "BTC05M2611190245",
+      "title": "BTC price today at 9:45pm EST",
+      "status": "active",
+      "type": "binary",
+      "category": "Crypto",
+      "expiresAt": "2026-11-19T02:45:00.000Z",
+      "contracts": [
+        {
+          "ticker": "UP",
+          "label": "Up",
+          "status": "active",
+          "marketState": "open",
+          "instrumentSymbol": "GEMI-BTC05M2611190245-UP",
+          "expiresAt": "2026-11-19T02:45:00.000Z",
+          "bestBid": "0.91",
+          "bestAsk": "0.99",
+          "lastTradePrice": "0.99"
+        }
+      ]
+    }
+  ],
+  "books": {
+    "GEMI-BTC2611192200-HI61500": {
+      "bids": [
+        {
+          "price": "0.72",
+          "amount": "30.0"
+        },
+        {
+          "price": "0.71",
+          "amount": "704.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.77",
+          "amount": "2178.0"
+        },
+        {
+          "price": "0.82",
+          "amount": "25.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI61750": {
+      "bids": [
+        {
+          "price": "0.67",
+          "amount": "30.0"
+        },
+        {
+          "price": "0.66",
+          "amount": "757.0"
+        },
+        {
+          "price": "0.64",
+          "amount": "50.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.72",
+          "amount": "1790.0"
+        },
+        {
+          "price": "0.75",
+          "amount": "50.0"
+        },
+        {
+          "price": "0.77",
+          "amount": "25.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI62000": {
+      "bids": [
+        {
+          "price": "0.62",
+          "amount": "30.0"
+        },
+        {
+          "price": "0.61",
+          "amount": "819.0"
+        },
+        {
+          "price": "0.59",
+          "amount": "50.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.67",
+          "amount": "1520.0"
+        },
+        {
+          "price": "0.7",
+          "amount": "50.0"
+        },
+        {
+          "price": "0.72",
+          "amount": "25.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI62250": {
+      "bids": [
+        {
+          "price": "0.58",
+          "amount": "250.0"
+        },
+        {
+          "price": "0.57",
+          "amount": "5.0"
+        },
+        {
+          "price": "0.56",
+          "amount": "892.0"
+        },
+        {
+          "price": "0.54",
+          "amount": "50.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.61",
+          "amount": "1281.0"
+        },
+        {
+          "price": "0.62",
+          "amount": "255.0"
+        },
+        {
+          "price": "0.65",
+          "amount": "50.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI62500": {
+      "bids": [
+        {
+          "price": "0.51",
+          "amount": "5.0"
+        },
+        {
+          "price": "0.5",
+          "amount": "1000.0"
+        },
+        {
+          "price": "0.48",
+          "amount": "250.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.56",
+          "amount": "1141.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI62750": {
+      "bids": [
+        {
+          "price": "0.46",
+          "amount": "250.0"
+        },
+        {
+          "price": "0.45",
+          "amount": "5.0"
+        },
+        {
+          "price": "0.44",
+          "amount": "1136.0"
+        },
+        {
+          "price": "0.42",
+          "amount": "75.0"
+        },
+        {
+          "price": "0.39",
+          "amount": "125.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.5",
+          "amount": "1255.0"
+        },
+        {
+          "price": "0.53",
+          "amount": "75.0"
+        },
+        {
+          "price": "0.56",
+          "amount": "125.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI63000": {
+      "bids": [
+        {
+          "price": "0.39",
+          "amount": "250.0"
+        },
+        {
+          "price": "0.38",
+          "amount": "1315.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.43",
+          "amount": "250.0"
+        },
+        {
+          "price": "0.45",
+          "amount": "914.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI63250": {
+      "bids": [
+        {
+          "price": "0.34",
+          "amount": "5.0"
+        },
+        {
+          "price": "0.33",
+          "amount": "1515.0"
+        },
+        {
+          "price": "0.31",
+          "amount": "75.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.38",
+          "amount": "806.0"
+        },
+        {
+          "price": "0.39",
+          "amount": "5.0"
+        },
+        {
+          "price": "0.41",
+          "amount": "25.0"
+        },
+        {
+          "price": "0.42",
+          "amount": "50.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI63500": {
+      "bids": [
+        {
+          "price": "0.28",
+          "amount": "1790.0"
+        },
+        {
+          "price": "0.25",
+          "amount": "75.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.33",
+          "amount": "751.0"
+        },
+        {
+          "price": "0.35",
+          "amount": "25.0"
+        },
+        {
+          "price": "0.36",
+          "amount": "50.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611192200-HI63750": {
+      "bids": [
+        {
+          "price": "0.23",
+          "amount": "2178.0"
+        },
+        {
+          "price": "0.2",
+          "amount": "75.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.29",
+          "amount": "709.0"
+        },
+        {
+          "price": "0.3",
+          "amount": "25.0"
+        },
+        {
+          "price": "0.31",
+          "amount": "50.0"
+        }
+      ]
+    },
+    "GEMI-NBA-2611190000-MIL-MIA-T-O256": {
+      "bids": [
+        {
+          "price": "0.85",
+          "amount": "100.0"
+        },
+        {
+          "price": "0.84",
+          "amount": "100.0"
+        },
+        {
+          "price": "0.83",
+          "amount": "100.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.88",
+          "amount": "100.0"
+        },
+        {
+          "price": "0.89",
+          "amount": "100.0"
+        },
+        {
+          "price": "0.9",
+          "amount": "100.0"
+        }
+      ]
+    },
+    "GEMI-BTC2611190300-HI62400": {
+      "bids": [
+        {
+          "price": "0.86",
+          "amount": "444.0"
+        },
+        {
+          "price": "0.85",
+          "amount": "688.0"
+        },
+        {
+          "price": "0.82",
+          "amount": "5.0"
+        },
+        {
+          "price": "0.74",
+          "amount": "15.39"
+        },
+        {
+          "price": "0.73",
+          "amount": "50.0"
+        },
+        {
+          "price": "0.72",
+          "amount": "83.61"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.92",
+          "amount": "6250.0"
+        },
+        {
+          "price": "0.93",
+          "amount": "544.0"
+        },
+        {
+          "price": "0.99",
+          "amount": "149.0"
+        }
+      ]
+    },
+    "GEMI-BTC05M2611190245-UP": {
+      "bids": [
+        {
+          "price": "0.91",
+          "amount": "10.0"
+        },
+        {
+          "price": "0.67",
+          "amount": "3.0"
+        },
+        {
+          "price": "0.65",
+          "amount": "6.0"
+        },
+        {
+          "price": "0.63",
+          "amount": "27.0"
+        },
+        {
+          "price": "0.01",
+          "amount": "35.0"
+        }
+      ],
+      "asks": [
+        {
+          "price": "0.99",
+          "amount": "33.0"
+        }
+      ]
+    }
+  }
+}

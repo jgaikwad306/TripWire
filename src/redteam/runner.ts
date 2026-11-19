@@ -10,7 +10,7 @@ import { waitForTx, type World, type WorldFactory } from './world.js';
  * Order scenarios run in. On Arc every scenario shares one hot wallet, so the ones an
  * unguarded agent loses the most on go last and cannot starve the others within a run.
  */
-const EXECUTION_RANK: Record<ScenarioCategory, number> = { honest: 0, receive: 1, api: 2, send: 3, hold: 4 };
+const EXECUTION_RANK: Record<ScenarioCategory, number> = { honest: 0, receive: 1, api: 2, market: 3, send: 4, hold: 5 };
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 

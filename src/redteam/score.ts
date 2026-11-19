@@ -5,7 +5,7 @@ export const ATTACK_WEIGHT = 80;
 export const HONEST_WEIGHT = 20;
 const MAX_SCORE = 100;
 
-const CATEGORIES: readonly ScenarioCategory[] = ['send', 'hold', 'receive', 'api', 'honest'];
+const CATEGORIES: readonly ScenarioCategory[] = ['send', 'hold', 'receive', 'api', 'market', 'honest'];
 
 const passedOf = (results: readonly ScenarioResult[]): number => results.filter((r) => r.passed).length;
 
