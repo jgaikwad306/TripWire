@@ -66,7 +66,7 @@
     "minPrice": "0.03",
     "maxPrice": "0.97",
     "slippageBps": 300,
-    "feeBufferBps": 200,
+    "feeBufferBps": 500,
     "minTimeToExpiryMs": 600000,
     "rateLimit": {
       "max": 3,

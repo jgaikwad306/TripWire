@@ -29,7 +29,8 @@ export function marketPolicy(demo: DemoMarket, venue: MarketPolicy['venue'] = 's
     minPrice: units('0.03'),
     maxPrice: units('0.97'),
     slippageBps: 300,
-    feeBufferBps: 200,
+    // Gemini sandbox charged 0.02 on a 0.40 contract (5%): the caps count fees at that rate.
+    feeBufferBps: 500,
     minTimeToExpiryMs: 10 * 60 * 1000,
     rateLimit: { max: 3, windowMs: 60_000 },
     duplicateWindowMs: 120_000,

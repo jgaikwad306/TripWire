@@ -20,7 +20,9 @@ describe('Gemini request signing', () => {
     expect(payload(signRequest('/p', {}, { apiKey: 'k', apiSecret: 's' }, 1))).not.toHaveProperty('account');
     const frozen = new NonceSource('increment', () => 1000);
     expect([frozen.next(), frozen.next(), frozen.next()]).toEqual([1000, 1001, 1002]);
-    expect(new NonceSource('time', () => 1_700_000_000_999).next()).toBe(1_700_000_000);
+    const seconds = new NonceSource('time', () => 1_700_000_000_999);
+    // Epoch seconds, and never repeated: Gemini refuses a nonce that has not increased.
+    expect([seconds.next(), seconds.next()]).toEqual([1_700_000_000, 1_700_000_001]);
   });
 });
 

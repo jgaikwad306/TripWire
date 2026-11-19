@@ -18,7 +18,7 @@ Observed: `prices.buy.no` = 1 − `bestBid` (YES) and `prices.sell.no` = 1 − `
 
 ## Sandbox
 
-`https://api.sandbox.gemini.com/v1/prediction-markets/events` **serves events** (verified). Whether a sandbox key can *place* prediction market orders is **unconfirmed**. A sandbox venue reads market data from the sandbox, so the guard checks orders against the books they hit.
+`https://api.sandbox.gemini.com/v1/prediction-markets/events` **serves events**, and a sandbox account-scoped Trader key **can place prediction market orders** (verified 2026-11-19: order `145853902322749038`, see `results/markets/gemini-sandbox-order.md`). The sandbox account came with 100,000 test USD and the terms already accepted. A sandbox venue reads market data from the sandbox, so the guard checks orders against the books they hit.
 
 ## Trading (docs)
 
@@ -26,15 +26,15 @@ Observed: `prices.buy.no` = 1 − `bestBid` (YES) and `prices.sell.no` = 1 − `
 - **We place immediate-or-cancel orders**, so nothing rests on the book. The guard still cancels anything a venue reports open after `fillTimeoutMs`.
 - Cancel: `POST /v1/prediction-markets/order/cancel` `{ orderId }`. Active: `POST …/orders/active`. History: `POST …/orders/history`. Positions: `POST …/positions`. There is no single-order endpoint; status is looked up in active orders, then history.
 - `orderId` is int64. The client quotes it before `JSON.parse` so values above 2^53 stay exact (tested).
-- Auth: payload `{ request, nonce, …fields }` base64 in `X-GEMINI-PAYLOAD`, `X-GEMINI-SIGNATURE` = hex HMAC-SHA384 of that base64 string, empty body. Nonce: time-based keys want **epoch seconds within ±30 s**, incremental keys a strictly increasing number (`GEMINI_NONCE_MODE`). Master keys add `account`.
-- Terms: the docs name `hasAcceptedLatest`. Paths used: `POST /v1/prediction-markets/terms/status` and `…/terms/accept` (**unconfirmed**: from the plan, not read on the docs site).
-- Balance: `POST /v1/balances` (Gemini's standard Get Available Balances), USD.
+- Auth (verified on the sandbox): payload `{ request, nonce, …fields }` base64 in `X-GEMINI-PAYLOAD`, `X-GEMINI-SIGNATURE` = hex HMAC-SHA384 of that base64 string, empty body. Nonce: epoch seconds by default, and **strictly increasing even for time-based keys** (a repeated second is refused with `InvalidNonce: … has not increased`), so a second call in the same second uses the next second. Master keys add `account`.
+- Terms (verified): **Get Terms Status is a signed `GET /v1/prediction-markets/terms/status`** (a POST gets `405 VerbNotSupported`) returning `{ hasAcceptedLatest, acceptedVersion, latestVersion }`. Accept is a signed `POST /v1/prediction-markets/terms/accept` → `{ success }`. The terms text is public: `GET /v1/prediction-markets/terms`.
+- Balance (verified): `POST /v1/balances`, USD `available`.
+- Fee (observed once): 0.02 on a 1-contract buy at 0.40 (5%). The policy's `feeBufferBps` is 500 to match.
 
 ## Unconfirmed
 
 - Whether a NO order's `price` is the NO price. We assume yes (it matches `prices.buy.no`), and all cost math goes through `costOf()` so it changes in one place.
-- Fees, tick size beyond `priceIncrement`, and rate limits. The policy adds `feeBufferBps` (2%).
-- Sandbox trading support.
+- The fee schedule (one observation above), tick size beyond `priceIncrement`, and rate limits.
 
 ## Live venue decision
 

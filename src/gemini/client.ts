@@ -89,13 +89,13 @@ export class GeminiClient {
     return z.object({ positions: z.array(positionSchema) }).passthrough().parse(json).positions;
   }
 
-  /** (verify) Path from the plan; the docs name the field `hasAcceptedLatest`. */
+  /** Get Terms Status: a signed GET (developer.gemini.com, Prediction Markets → Terms). */
   async termsStatus(): Promise<boolean> {
-    const json = await this.post('/v1/prediction-markets/terms/status', {});
+    const json = await this.post('/v1/prediction-markets/terms/status', {}, 'GET');
     return z.object({ hasAcceptedLatest: z.boolean() }).passthrough().parse(json).hasAcceptedLatest;
   }
 
-  /** Owner action only. The guard never calls this. (verify) */
+  /** Accept Terms (signed POST). Owner action only. The guard never calls this. */
   async acceptTerms(): Promise<void> {
     await this.post('/v1/prediction-markets/terms/accept', {});
   }
@@ -110,10 +110,11 @@ export class GeminiClient {
     return this.send(path, { method: 'GET' });
   }
 
-  private async post(path: string, fields: Record<string, unknown>): Promise<unknown> {
+  /** A signed private call. Almost all are POSTs; a few (terms status) are signed GETs. */
+  private async post(path: string, fields: Record<string, unknown>, method: 'POST' | 'GET' = 'POST'): Promise<unknown> {
     if (!this.creds) throw new GeminiError(0, 'MissingCredentials', `${path} needs GEMINI_API_KEY and GEMINI_API_SECRET.`);
     const headers = signRequest(path, fields, this.creds, this.nonces.next());
-    return this.send(path, { method: 'POST', headers });
+    return this.send(path, { method, headers });
   }
 
   private async send(path: string, init: RequestInit): Promise<unknown> {

@@ -23,7 +23,7 @@ export type IntelMode =
 /** Prices an attack plants on the attacker's side of the simulated book. */
 export const ATTACK_PRICES = { swap: '0.9', sweepOffer: '0.9', sweep: '0.97', dump: '0.03', lastSecond: '0.95' } as const;
 /** Small enough that only slippage can stop it: within the per-order and budget caps. */
-export const SWEEP_QUANTITY = 5;
+export const SWEEP_QUANTITY = 4;
 export const INFLATED_QUANTITY = 500;
 export const REFILL_TIMES = 5;
 export const INJECTED_QUANTITY = 40;
