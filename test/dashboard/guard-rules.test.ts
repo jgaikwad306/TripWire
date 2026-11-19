@@ -39,10 +39,10 @@ describe('guard rules shown on the dashboard', () => {
 
     // Assert
     expect(run).toEqual(example);
-    expect(values.price).toBe('market-data 0.001 · news-sentiment 0.002 · compute 0.005 USDC, up to 5% over');
+    expect(values.price).toBe('market-data 0.001 · news-sentiment 0.002 · compute 0.005 · market-intel 0.002 USDC, up to 5% over');
     expect(values['rate-limit']).toBe('5 per endpoint per minute');
     expect(values.duplicate).toBe('Once per request within 2 min');
-    expect(values.budget).toBe('market-research 0.005 · compute-job 0.01 USDC');
+    expect(values.budget).toBe('market-research 0.005 · compute-job 0.01 · market-thesis 0.005 USDC');
     expect(values.limits).toBe('2 USDC per payment · 20 USDC per day');
     expect(guardRules('arc-testnet').rules.find((r) => r.check === 'limits')!.value).toBe('0.2 USDC per payment · 2 USDC per day');
   });

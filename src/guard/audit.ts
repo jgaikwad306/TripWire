@@ -7,8 +7,8 @@ export interface AuditEntry {
   at: string;
   /** 'off' for the unguarded baseline, which approves everything. */
   guard: 'on' | 'off';
-  /** send: a quoted merchant payment; api: a paid HTTP request; receive: a payment made to us. */
-  kind: 'send' | 'api' | 'receive';
+  /** send: a quoted merchant payment; api: a paid HTTP request; receive: a payment made to us; market: a prediction market order. */
+  kind: 'send' | 'api' | 'receive' | 'market';
   allowed: boolean;
   rule: string;
   reason: string;
@@ -20,6 +20,8 @@ export interface AuditEntry {
   txHash?: string;
   /** Gateway's transfer id for a batched nanopayment. */
   settlementRef?: string;
+  /** A prediction market order: the venue's order id. */
+  orderRef?: string;
 }
 
 /** Append-only: entries are added, never changed or removed. */
@@ -59,6 +61,7 @@ export function auditEntry(decision: Decision, context: AuditContext, guard: 'on
     reason: decision.reason,
     ...(decision.txHash ? { txHash: decision.txHash } : decision.receivedTx ? { txHash: decision.receivedTx } : {}),
     ...(decision.settlementRef ? { settlementRef: decision.settlementRef } : {}),
+    ...(decision.orderRef ? { orderRef: decision.orderRef } : {}),
   };
 }
 

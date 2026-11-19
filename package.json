@@ -9,6 +9,7 @@
     "dashboard": "tsx src/cli.ts dashboard",
     "redteam": "tsx src/cli.ts run --all --compare",
     "redteam:api": "tsx src/cli.ts run --suite api --compare",
+    "redteam:market": "tsx src/cli.ts run --suite market --compare",
     "setup-wallets": "tsx src/cli.ts gateway status",
     "gateway:deposit": "tsx src/cli.ts gateway deposit",
     "demo:replay": "tsx src/cli.ts dashboard --replay",

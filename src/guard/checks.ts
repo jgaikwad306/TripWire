@@ -18,6 +18,13 @@ export const CHECK = {
   budget: 'budget',
   rateLimit: 'rate-limit',
   duplicate: 'duplicate',
+  // prediction market orders (also reuse price, limits, budget, rate-limit, duplicate)
+  market: 'market',
+  marketState: 'market-state',
+  side: 'side',
+  outcome: 'outcome',
+  slippage: 'slippage',
+  venue: 'venue',
   // receive side
   recipient: 'recipient',
   network: 'network',

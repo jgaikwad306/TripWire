@@ -37,7 +37,14 @@ const MUTATIONS: Record<string, readonly string[]> = {
   // Paid API calls (Circle Gateway nanopayments)
   resource: ['api-prompt-injection', 'api-redirect'],
   network: ['api-wrong-network'],
-  budget: ['api-salami'],
+  budget: ['api-salami', 'market-salami'],
+  // Prediction market orders (Gemini). M5 and M6 are not listed under limits / duplicate:
+  // with those off, the task budget still stops them, a second line of defence.
+  market: ['market-injection'],
+  'market-state': ['market-last-second'],
+  slippage: ['market-price-sweep'],
+  outcome: ['market-outcome-flip'],
+  side: ['market-liquidate'],
   duplicate: ['api-drain-loop', 'api-duplicate'],
   limits: ['over-cap-quote', 'daily-cap-drain'],
   loop: ['payment-loop'],
