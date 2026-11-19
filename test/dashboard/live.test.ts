@@ -199,9 +199,9 @@ describe('live dashboard', () => {
     expect(page).toContain('Your agent. Under attack.');
     expect(page).toMatch(/<body>\s*<div class="ledger-bg" aria-hidden="true">/);
     // Tripwires: one above the hero's bottom row and one in each section's top gap, all decorative.
-    expect(page.match(/<span class="tripwire" aria-hidden="true">/g)).toHaveLength(6);
-    // How the guard works: its own tab beside the attack lab, which is selected first.
-    expect(page).toMatch(/<div class="view-tabs" role="tablist" aria-label="Views"><button type="button" role="tab" class="view-tab" id="tab-lab" aria-controls="panel-lab" aria-selected="true">Attack lab<\/button><button type="button" role="tab" class="view-tab" id="tab-guard" aria-controls="panel-guard" aria-selected="false" tabindex="-1">How the guard works<\/button><\/div>/);
+    expect(page.match(/<span class="tripwire" aria-hidden="true">/g)).toHaveLength(7);
+    // How the guard works and Prediction markets: their own tabs beside the attack lab, which is selected first.
+    expect(page).toMatch(/<div class="view-tabs" role="tablist" aria-label="Views"><button type="button" role="tab" class="view-tab" id="tab-lab" aria-controls="panel-lab" aria-selected="true">Attack lab<\/button><button type="button" role="tab" class="view-tab" id="tab-guard" aria-controls="panel-guard" aria-selected="false" tabindex="-1">How the guard works<\/button><button type="button" role="tab" class="view-tab" id="tab-markets" aria-controls="panel-markets" aria-selected="false" tabindex="-1">Prediction markets<\/button><\/div>/);
     expect(page).toMatch(/<main>\s*<div class="view-panel" id="panel-lab" role="tabpanel" aria-labelledby="tab-lab">\s*<section class="hero"/);
     expect(page).toMatch(/<div class="view-panel" id="panel-guard" role="tabpanel" aria-labelledby="tab-guard" hidden>\s*<section class="section guard-section" id="guard"/);
     expect(page).toContain('<a id="monitor-link" href="#streams-monitor">');
