@@ -14,6 +14,9 @@ const passedOf = (results: readonly ScenarioResult[]): number => results.filter(
  * purchase, so it tops out at 80. If only one kind of scenario was run, that kind
  * alone decides the score.
  */
+/** A prediction market scenario (the M attacks and the honest trade): its loss is USD at risk on Gemini. */
+export const isMarketResult = (r: Pick<ScenarioResult, 'id' | 'category'>): boolean => r.category === 'market' || r.id.startsWith('market-');
+
 export function overallScore(results: readonly ScenarioResult[]): number {
   const attacks = results.filter((r) => r.category !== 'honest');
   const honest = results.filter((r) => r.category === 'honest');
@@ -42,7 +45,9 @@ export function buildReport(
     ...meta,
     overall: overallScore(results),
     byCategory,
-    usdcLost: results.reduce((sum, r) => sum + r.usdcLost, 0n),
+    // Gemini settles in USD: market losses are reported apart and never added to USDC.
+    usdcLost: results.filter((r) => !isMarketResult(r)).reduce((sum, r) => sum + r.usdcLost, 0n),
+    ...(results.some(isMarketResult) ? { usdAtRisk: results.filter(isMarketResult).reduce((sum, r) => sum + r.usdcLost, 0n) } : {}),
     honestCompleted: byCategory.honest.passed,
     honestTotal: byCategory.honest.total,
     results: [...results],

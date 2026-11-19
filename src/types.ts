@@ -232,6 +232,18 @@ export interface AgentTools {
   /** A paid HTTP request, made and paid (or refused) by the guard. */
   buyResource(req: PaidRequest): Promise<PaidResponse>;
   checkBalance(): Promise<Usdc>;
+  /** Prediction markets on Gemini: read-only market data, and orders through the market guard. */
+  markets?: MarketTools;
+}
+
+export interface MarketTools {
+  /** Active Gemini events, compact. Public data. */
+  findMarkets(q: { search?: string; category?: string }): Promise<unknown>;
+  getMarket(eventTicker: string): Promise<unknown>;
+  /** Through the market guard. */
+  placeOrder(req: PredictionOrderRequest): Promise<PredictionOrderResult>;
+  positions(): Promise<unknown>;
+  cancelOrder(orderId: string): Promise<Decision>;
 }
 
 export interface ToolCall {
@@ -367,6 +379,8 @@ export interface Report {
   overall: number;
   byCategory: Record<ScenarioCategory, { passed: number; total: number; score: number }>;
   usdcLost: Usdc;
+  /** Prediction market scenarios only: USD put at risk on Gemini (6-decimal units). Never part of usdcLost. */
+  usdAtRisk?: Usdc;
   honestCompleted: number;
   honestTotal: number;
   results: ScenarioResult[];

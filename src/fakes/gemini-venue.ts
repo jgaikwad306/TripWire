@@ -206,18 +206,22 @@ export class SimulatedVenue implements Venue {
   }
 }
 
-/** Real depth when the snapshot has it, else levels built around the best bid and ask. */
+/**
+ * Real depth when the snapshot has it, plus synthetic market depth at and just behind the
+ * best price, so an order of any size meets the price an honest order would get first.
+ */
 function seedBook(captured: GeminiBook | undefined, bestBid?: string, bestAsk?: string): { bids: Level[]; asks: Level[] } {
   const book = { bids: [] as Level[], asks: [] as Level[] };
   if (captured) {
     book.bids = captured.bids.map((l) => ({ price: units(l.price), quantity: units(l.amount), owner: 'market' as const }));
     book.asks = captured.asks.map((l) => ({ price: units(l.price), quantity: units(l.amount), owner: 'market' as const }));
   }
-  const worstAsk = book.asks.at(-1)?.price ?? (bestAsk ? units(bestAsk) : undefined);
-  const worstBid = book.bids.at(-1)?.price ?? (bestBid ? units(bestBid) : undefined);
+  sortBook(book);
+  const topAsk = book.asks[0]?.price ?? (bestAsk ? units(bestAsk) : undefined);
+  const topBid = book.bids[0]?.price ?? (bestBid ? units(bestBid) : undefined);
   for (const step of SYNTHETIC_STEPS) {
-    if (worstAsk !== undefined && worstAsk + step <= MAX_PRICE) book.asks.push({ price: worstAsk + step, quantity: SYNTHETIC_QUANTITY, owner: 'market' });
-    if (worstBid !== undefined && worstBid - step >= MIN_PRICE) book.bids.push({ price: worstBid - step, quantity: SYNTHETIC_QUANTITY, owner: 'market' });
+    if (topAsk !== undefined && topAsk + step <= MAX_PRICE) book.asks.push({ price: topAsk + step, quantity: SYNTHETIC_QUANTITY, owner: 'market' });
+    if (topBid !== undefined && topBid - step >= MIN_PRICE) book.bids.push({ price: topBid - step, quantity: SYNTHETIC_QUANTITY, owner: 'market' });
   }
   sortBook(book);
   return book;

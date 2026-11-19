@@ -126,6 +126,7 @@ const savedReportSchema = z.object({
       honest: categoryScoreSchema,
     }),
     usdcLost: usdcSchema,
+    usdAtRisk: usdcSchema.optional(),
     honestCompleted: z.number(),
     honestTotal: z.number(),
     results: z.array(resultSchema),

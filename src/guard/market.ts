@@ -64,8 +64,10 @@ const checkResolve: MarketCheck = (facts, _p, _now, contract) => {
 };
 
 const checkState: MarketCheck = (facts, policy, now, contract) => {
-  const event = facts.event!;
-  const c = contract!;
+  const event = facts.event;
+  const c = contract;
+  // Only reached without an event or contract when the resolve check is switched off (mutation test).
+  if (!event || !c) return null;
   if (event.status !== 'active' || c.status !== 'active') return deny(CHECK.marketState, `${c.instrumentSymbol} is not active on Gemini (event ${event.status}, contract ${c.status}).`);
   if (c.marketState !== 'open') return deny(CHECK.marketState, `${c.instrumentSymbol} is ${c.marketState}, not open for trading.`);
   const expiry = Date.parse(c.expiresAt ?? event.expiresAt ?? '');
@@ -80,9 +82,10 @@ const checkMandate: MarketCheck = (facts, policy) => {
   if (!facts.task) return deny(CHECK.market, 'No market task has been declared, so no order is allowed.');
   const task = policy.tasks[facts.task.name];
   if (!task) return deny(CHECK.market, `The declared task "${facts.task.name}" is not in the policy.`);
-  return task.events.includes(facts.event!.ticker)
+  const ticker = facts.event?.ticker ?? facts.request.eventTicker;
+  return task.events.includes(ticker)
     ? null
-    : deny(CHECK.market, `Event ${facts.event!.ticker} ("${facts.event!.title}") is not part of task "${facts.task.name}" (${task.description}).`);
+    : deny(CHECK.market, `Event ${ticker}${facts.event ? ` ("${facts.event.title}")` : ''} is not part of task "${facts.task.name}" (${task.description}).`);
 };
 
 const taskOf = (facts: MarketFacts, policy: MarketPolicy) => policy.tasks[facts.task!.name]!;
