@@ -49,15 +49,48 @@ export function marketPolicy(demo: DemoMarket, venue: MarketPolicy['venue'] = 's
   });
 }
 
-/** Offline: the committed snapshot. Live: a fresh one from Gemini's public API. */
-export async function marketSnapshot(env: NodeJS.ProcessEnv, live: boolean): Promise<MarketSnapshot> {
-  if (!live) return loadSnapshot();
-  const data = new GeminiMarketData(new GeminiClient({ baseUrl: env.GEMINI_MARKET_DATA_URL || GEMINI_PRODUCTION_URL }));
-  return captureSnapshot(data, { ...(env.GEMINI_DEMO_EVENT ? { preferred: env.GEMINI_DEMO_EVENT } : {}) });
+/**
+ * Where a live run reads its events. The guarded pass trades on GEMINI_ENV and the guard
+ * re-reads each event there, so the demo event must be picked from that same environment:
+ * the sandbox lists far fewer events than production (it 404s on most production tickers).
+ */
+export function marketDataUrl(env: NodeJS.ProcessEnv): string {
+  if (env.GEMINI_MARKET_DATA_URL) return env.GEMINI_MARKET_DATA_URL;
+  return geminiEnv(env) === 'sandbox' ? GEMINI_SANDBOX_URL : GEMINI_PRODUCTION_URL;
 }
 
+/**
+ * How long a live pick must stay open. The sandbox only quotes its hourly crypto events, which
+ * are listed about two hours before expiry, so a two-hour horizon would never find one there.
+ * Twenty minutes covers a run (about a minute a pass) above the guard's ten-minute floor.
+ */
+const SANDBOX_HORIZON_MS = 20 * 60 * 1000;
+
+/** Offline: the committed snapshot. Live: a fresh one from the environment the guarded pass trades on. */
+export async function marketSnapshot(env: NodeJS.ProcessEnv, live: boolean): Promise<MarketSnapshot> {
+  if (!live) return loadSnapshot();
+  const source = marketDataUrl(env);
+  const sandbox = source === GEMINI_SANDBOX_URL;
+  const data = new GeminiMarketData(new GeminiClient({ baseUrl: source }));
+  try {
+    return await captureSnapshot(data, {
+      source,
+      ...(env.GEMINI_DEMO_EVENT ? { preferred: env.GEMINI_DEMO_EVENT } : {}),
+      ...(sandbox ? { minHorizonMs: SANDBOX_HORIZON_MS } : {}),
+    });
+  } catch (err) {
+    if (!sandbox) throw err;
+    throw new Error(
+      `${(err as Error).message}\nThe Gemini sandbox only quotes its hourly crypto events, and not all the time. Retry when one is listed ` +
+        '(npm run cli gemini markets reads production; check https://api.sandbox.gemini.com/v1/prediction-markets/events), ' +
+        'or run the Gemini side on the simulated venue with GEMINI_ENV=simulated.',
+    );
+  }
+}
+
+/** The run's markets: the snapshot's own task event unless GEMINI_DEMO_EVENT names another. */
 export const demoMarketOf = (snap: MarketSnapshot, env: NodeJS.ProcessEnv = {}): DemoMarket =>
-  pickDemoMarket(snap.events, Date.parse(snap.capturedAt), env.GEMINI_DEMO_EVENT || undefined);
+  pickDemoMarket(snap.events, Date.parse(snap.capturedAt), env.GEMINI_DEMO_EVENT || snap.taskEvent || undefined);
 
 /**
  * The venue for a guarded pass, from GEMINI_ENV. A live venue reads market data from the

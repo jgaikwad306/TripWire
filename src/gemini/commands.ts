@@ -17,7 +17,8 @@ const USAGE = `Usage: npm run cli gemini <command>
   smoke                                        one guarded 1-contract order at the best ask
   cancel-all                                   cancel every open prediction market order
 
-Market data always comes from ${GEMINI_PRODUCTION_URL} (GEMINI_MARKET_DATA_URL); no key needed.
+These commands read market data from ${GEMINI_PRODUCTION_URL} (GEMINI_MARKET_DATA_URL); no key needed.
+Live red-team runs and the dashboard read events from the environment they trade on (GEMINI_ENV).
 Trading uses GEMINI_ENV (simulated | sandbox | production) with GEMINI_API_KEY / GEMINI_API_SECRET.`;
 
 export const marketDataClient = (env: NodeJS.ProcessEnv, fetchImpl?: typeof fetch) =>
