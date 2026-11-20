@@ -1,6 +1,6 @@
 import { formatUsdc } from '../constants.js';
-import { GEMINI_PRODUCTION_URL, GeminiClient, GeminiMarketData } from '../gemini/client.js';
-import { MARKET_TASK, marketPolicy } from '../gemini/demo.js';
+import { GeminiClient, GeminiMarketData } from '../gemini/client.js';
+import { MARKET_TASK, marketDataUrl, marketPolicy } from '../gemini/demo.js';
 import { loadSnapshot, pickDemoMarket, type DemoMarket, type MarketSnapshot } from '../gemini/snapshot.js';
 import type { MarketData } from '../gemini/venue.js';
 import { CHECK } from '../guard/checks.js';
@@ -54,7 +54,7 @@ export class MarketBoardSource {
   private timer?: ReturnType<typeof setInterval>;
 
   constructor(private readonly opts: { env: NodeJS.ProcessEnv; live: boolean; data?: MarketData; suite: string[]; focused: string[]; now?: () => number }) {
-    if (opts.live) this.data = opts.data ?? new GeminiMarketData(new GeminiClient({ baseUrl: opts.env.GEMINI_MARKET_DATA_URL || GEMINI_PRODUCTION_URL }));
+    if (opts.live) this.data = opts.data ?? new GeminiMarketData(new GeminiClient({ baseUrl: marketDataUrl(opts.env) }));
   }
 
   async board(): Promise<MarketBoard> {
@@ -74,7 +74,7 @@ export class MarketBoardSource {
   private async refresh(): Promise<MarketBoard> {
     const now = (this.opts.now ?? Date.now)();
     this.snapshot ??= loadSnapshot();
-    this.demo ??= pickDemoMarket(this.snapshot.events, Date.parse(this.snapshot.capturedAt), this.opts.env.GEMINI_DEMO_EVENT || undefined);
+    this.demo ??= pickDemoMarket(this.snapshot.events, Date.parse(this.snapshot.capturedAt), this.opts.env.GEMINI_DEMO_EVENT || this.snapshot.taskEvent || undefined);
     let source: MarketBoard['source'] = 'snapshot';
     let event = this.snapshot.events.find((e) => e.ticker === this.demo!.task.eventTicker)!;
     if (this.data) {

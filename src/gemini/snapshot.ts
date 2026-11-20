@@ -13,6 +13,8 @@ export interface MarketSnapshot {
   source: string;
   events: GeminiEvent[];
   books: Record<string, GeminiBook>;
+  /** The task event picked at capture, so a later pick from this snapshot lands on the same one. */
+  taskEvent?: string;
 }
 
 export const SNAPSHOT_FILE = join('fixtures', 'gemini', 'snapshot.json');
@@ -62,15 +64,16 @@ function pick(e: GeminiEvent, c: GeminiContract): MarketPick {
 /**
  * Picks the run's markets. The task event is `preferred` when given, else the first active
  * event that is not a minutes-long contract, with at least four tradeable strikes and a
- * contract whose YES ask is between 0.10 and 0.90 (the one closest to 0.50 is bought).
+ * contract whose YES ask is between 0.10 and 0.90 (the one closest to 0.50 is bought). The
+ * event must stay open for `minHorizonMs` (default two hours, room to record a demo).
  */
-export function pickDemoMarket(events: GeminiEvent[], now: number, preferred?: string): DemoMarket {
+export function pickDemoMarket(events: GeminiEvent[], now: number, preferred?: string, minHorizonMs = 2 * HOUR): DemoMarket {
   const tradeable = (e: GeminiEvent) => e.contracts.filter((c) => open(c) && inRange(c.bestAsk, 0.05, 0.95) && c.bestBid !== undefined);
   const candidates = events.filter((e) => e.status === 'active');
   const task = preferred
     ? candidates.find((e) => e.ticker === preferred)
-    : candidates.find((e) => expiryOf(e) > now + 2 * HOUR && tradeable(e).length >= 4 && tradeable(e).some((c) => inRange(c.bestAsk, 0.1, 0.9)));
-  if (!task) throw new Error(preferred ? `GEMINI_DEMO_EVENT "${preferred}" is not an active event.` : 'No active Gemini event suits the demo (needs 4+ tradeable strikes, a YES ask between 0.10 and 0.90).');
+    : candidates.find((e) => expiryOf(e) > now + minHorizonMs && tradeable(e).length >= 4 && tradeable(e).some((c) => inRange(c.bestAsk, 0.1, 0.9)));
+  if (!task) throw new Error(preferred ? `GEMINI_DEMO_EVENT "${preferred}" is not an active event.` : `No active Gemini event suits the demo (needs 4+ tradeable strikes, a YES ask between 0.10 and 0.90, open for ${Math.round(minHorizonMs / 60_000)}+ min).`);
   const strikes = tradeable(task);
   const main = [...strikes].filter((c) => inRange(c.bestAsk, 0.1, 0.9)).sort((a, b) => Math.abs(Number(a.bestAsk) - 0.5) - Math.abs(Number(b.bestAsk) - 0.5))[0];
   if (!main) throw new Error(`Event ${task.ticker} has no contract with a YES ask between 0.10 and 0.90.`);
@@ -99,10 +102,10 @@ export function pickDemoMarket(events: GeminiEvent[], now: number, preferred?: s
 }
 
 /** Reads live data and keeps just what a run needs: the picked events and their books. */
-export async function captureSnapshot(data: MarketData, opts: { now?: number; preferred?: string; source?: string } = {}): Promise<MarketSnapshot> {
+export async function captureSnapshot(data: MarketData, opts: { now?: number; preferred?: string; source?: string; minHorizonMs?: number } = {}): Promise<MarketSnapshot> {
   const now = opts.now ?? Date.now();
   const listed = await data.listEvents({ limit: 100 });
-  const demo = pickDemoMarket(listed, now, opts.preferred);
+  const demo = pickDemoMarket(listed, now, opts.preferred, opts.minHorizonMs);
   const tickers = [...new Set([demo.task.eventTicker, demo.offTask.eventTicker, demo.thin.eventTicker, demo.expiring.eventTicker])];
   const events = await Promise.all(tickers.map((t) => data.getEvent(t)));
   const books: Record<string, GeminiBook> = {};
@@ -113,7 +116,7 @@ export async function captureSnapshot(data: MarketData, opts: { now?: number; pr
       // A contract without a readable book is seeded from its best bid and ask instead.
     }
   }
-  return { capturedAt: new Date(now).toISOString(), source: opts.source ?? 'https://api.gemini.com', events: events.map(stripEmptyContracts), books };
+  return { capturedAt: new Date(now).toISOString(), source: opts.source ?? 'https://api.gemini.com', events: events.map(stripEmptyContracts), books, taskEvent: demo.task.eventTicker };
 }
 
 /** Contracts nobody quotes are noise for a demo; drop them to keep fixtures small. */

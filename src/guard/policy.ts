@@ -47,6 +47,13 @@ export interface MarketPolicy {
   readonly maxPrice: Usdc;
   /** How far a limit may be from the guard's own read of the book, in basis points. */
   readonly slippageBps: number;
+  /**
+   * How far the book may sit from the market's own anchors before the guard stops trusting it:
+   * the YES bid/ask spread, and the distance of the price the order would pay from the last
+   * trade. A swept or spoofed book moves the best offer but not the last trade or the other
+   * side, so a limit that is "within slippage" of a tampered book is still refused. Unset: off.
+   */
+  readonly maxBookDislocation?: Usdc | undefined;
   /** Added to every order's cost for fees before the caps are applied. */
   readonly feeBufferBps: number;
   /** Contracts closer to expiry than this are not traded. */
@@ -135,6 +142,7 @@ const policyFileSchema = z
         minPrice: usdcAmountSchema,
         maxPrice: usdcAmountSchema,
         slippageBps: z.number().int().min(0).max(MAX_BPS),
+        maxBookDislocation: usdcAmountSchema.optional(),
         feeBufferBps: z.number().int().min(0).max(MAX_BPS).default(0),
         minTimeToExpiryMs: z.number().int().min(0),
         rateLimit: z.object({ max: z.number().int().positive(), windowMs: z.number().int().positive() }).strict(),

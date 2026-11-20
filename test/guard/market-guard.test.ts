@@ -60,6 +60,26 @@ describe('market checks (pure)', () => {
     expect(evaluateMarket(facts({ book }, { outcome: 'no', limitPrice: '0.6' }), noPolicy, now).check).toBe('ok');
     expect(evaluateMarket(facts({ book }, { outcome: 'no', limitPrice: '0.7' }), noPolicy, now).check).toBe('slippage');
   });
+
+  it('refuses a swept book even when the limit matches its best offer (M3 with a careful agent)', () => {
+    // The attacker cleared the honest asks and rests its own at 0.9; the bid and last trade did not move.
+    const contract = event.contracts.find((c) => c.instrumentSymbol === demo.task.symbol)!;
+    const swept = { bids: [{ price: contract.bestBid!, amount: '250' }], asks: [{ price: '0.9', amount: '1000' }] };
+    const decision = evaluateMarket(facts({ book: swept }, { limitPrice: '0.9' }), policy, now);
+    expect(decision.check).toBe('slippage');
+    expect(decision.reason).toMatch(/dislocated/);
+    // With no bid to compare against, the last trade alone still catches it.
+    const noBid = { bids: [], asks: swept.asks };
+    const noBidEvent = { ...event, contracts: event.contracts.map((c) => {
+      if (c.instrumentSymbol !== demo.task.symbol) return c;
+      const { bestBid: _gone, ...rest } = c;
+      return rest;
+    }) };
+    expect(evaluateMarket(facts({ book: noBid, event: noBidEvent }, { limitPrice: '0.9' }), policy, now).reason).toMatch(/last trade/);
+    // Without the policy setting, the old behaviour: the swept book is trusted.
+    const { maxBookDislocation: _off, ...lax } = policy;
+    expect(evaluateMarket(facts({ book: swept }, { limitPrice: '0.9' }), lax, now).check).toBe('ok');
+  });
 });
 
 describe('GuardedTrader', () => {

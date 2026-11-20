@@ -571,7 +571,11 @@ export function liveWorldFactory(opts: WorldOptions, env: NodeJS.ProcessEnv = pr
   const marketSetup = (): Promise<MarketSetup | undefined> =>
     (market ??= marketSnapshot(env, true).then(
       (snapshot) => ({ snapshot, env, ...(geminiEnv(env) === 'simulated' ? {} : { liveVenue: () => guardedVenue(env, snapshot) }) }),
-      () => undefined,
+      (err: unknown) => {
+        // Said once, up front: otherwise each market scenario only reports that data is missing.
+        process.stderr.write(`\nGemini market data is unavailable, so the market scenarios will fail:\n${err instanceof Error ? err.message : String(err)}\n\n`);
+        return undefined;
+      },
     ));
 
   return async (overrides, onEvent) => {
