@@ -5,6 +5,7 @@ import { dashboardCommand } from './dashboard/server.js';
 import { streamsCommand } from './streams/commands.js';
 import { gatewayCommand } from './wallet/gateway.js';
 import { geminiCommand } from './gemini/commands.js';
+import { demoCommand } from './demo/commands.js';
 
 /**
  * Entry point: `npm run cli <command>`.
@@ -18,6 +19,7 @@ import { geminiCommand } from './gemini/commands.js';
  *   report    — re-render the latest report [--html]
  *   gateway   — Circle Gateway: `status` (addresses and balances) or `deposit <usdc>` from the hot wallet
  *   gemini    — Gemini Prediction Markets: markets, snapshot, status, terms, smoke, cancel-all
+ *   demo      — demo day: `check` (preflight), `live` (monitor + tunnel + Stream + dashboard), `zip` (AirDrop bundle)
  */
 type Command = (args: string[]) => Promise<void>;
 
@@ -34,6 +36,7 @@ const commands: Record<string, Command> = {
   report: (args) => reportCommand(args),
   gateway: (args) => gatewayCommand(args),
   gemini: (args) => geminiCommand(args),
+  demo: (args) => demoCommand(args),
 };
 
 const [name, ...args] = process.argv.slice(2);
