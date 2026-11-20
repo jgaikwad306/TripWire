@@ -39,7 +39,7 @@ export function cloudflaredCheck(version: string | undefined): CheckResult {
 
 /** Lines of the .env file that set `key`, in order. */
 export const linesSetting = (envText: string, key: string): string[] =>
-  envText.split(/\r?\n/).filter((line) => new RegExp(`^\\s*${key}\\s*=`).test(line));
+  envText.split(/\r?\n/).filter((line) => new RegExp(`^\\s*(export\\s+)?${key}\\s*=`).test(line));
 
 /** Checks on the .env file itself and the keys it sets. `envText` undefined: there is no .env. */
 export function envChecks(env: NodeJS.ProcessEnv, envText: string | undefined): CheckResult[] {
@@ -134,4 +134,19 @@ export function streamProgress(status: { ready: boolean; reason?: string | undef
   const total = Math.max(1, liveBoundary - startBlock + 1);
   const done = Math.min(total, Math.max(0, coveredThrough - startBlock + 1));
   return `${status.reason ?? 'not ready'}: block ${coveredThrough} of ${liveBoundary} (${Math.floor((done / total) * 100)}% of the backfill)`;
+}
+
+/**
+ * Zip entries that must never be AirDropped: env files other than .env.example, Circle's
+ * entity-secret recovery file, the monitor's data (control token, Stream credentials) and
+ * Claude Code's local folder. `prefix` is the folder the zip wraps the repo in.
+ */
+export function secretEntries(entries: readonly string[], prefix: string): string[] {
+  return entries.filter((entry) => {
+    const path = entry.startsWith(`${prefix}/`) ? entry.slice(prefix.length + 1) : entry;
+    const file = path.split('/').at(-1) ?? '';
+    if (/^\.env(\..+)?$/.test(file) && file !== '.env.example') return true;
+    if (/^recovery_file_.*\.dat$/.test(file)) return true;
+    return /^(\.data|\.claude)(\/|$)/.test(path);
+  });
 }

@@ -48,10 +48,13 @@ export interface MarketPolicy {
   /** How far a limit may be from the guard's own read of the book, in basis points. */
   readonly slippageBps: number;
   /**
-   * How far the book may sit from the market's own anchors before the guard stops trusting it:
-   * the YES bid/ask spread, and the distance of the price the order would pay from the last
-   * trade. A swept or spoofed book moves the best offer but not the last trade or the other
-   * side, so a limit that is "within slippage" of a tampered book is still refused. Unset: off.
+   * How far the price an order would pay may sit from the market's anchors (the last trade and
+   * the far side of the book, in the order's outcome space) before the guard stops trusting the
+   * book. A swept or spoofed book moves the best offer but not those, so a limit "within
+   * slippage" of a tampered book is still refused. Only the direction that hurts the order
+   * counts, against the more favourable anchor (a buy: the higher of last trade and bid), so a
+   * wiped-out bid side alone does not block a buy. A stale last trade can therefore widen the
+   * allowance; keep the value tight. Unset: off.
    */
   readonly maxBookDislocation?: Usdc | undefined;
   /** Added to every order's cost for fees before the caps are applied. */

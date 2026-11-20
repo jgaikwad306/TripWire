@@ -9,7 +9,9 @@ import {
   monitorCheck,
   nodeCheck,
   renderChecks,
+  linesSetting,
   replayCheck,
+  secretEntries,
   streamProgress,
   tunnelUrlIn,
 } from '../../src/demo/checks.js';
@@ -87,5 +89,16 @@ describe('live demo helpers', () => {
       'Stream backfill is incomplete: block 1499 of 1999 (50% of the backfill)',
     );
     expect(streamProgress({ ready: false, reason: 'Stream not configured', coveredThrough: -1 })).toBe('Stream not configured');
+  });
+});
+
+describe('demo:zip secrets check', () => {
+  it('flags env files, the Circle recovery file, .data and .claude, but not .env.example', () => {
+    const entries = ['TripWire/.env', 'TripWire/.env.local', 'TripWire/.env.example', 'TripWire/sub/.env.production', 'TripWire/recovery_file_1700000000.dat', 'TripWire/.data/streams/credentials.json', 'TripWire/.claude/settings.local.json', 'TripWire/src/env.ts', 'TripWire/docs/.envrc-notes.md'];
+    expect(secretEntries(entries, 'TripWire')).toEqual(['TripWire/.env', 'TripWire/.env.local', 'TripWire/sub/.env.production', 'TripWire/recovery_file_1700000000.dat', 'TripWire/.data/streams/credentials.json', 'TripWire/.claude/settings.local.json']);
+  });
+
+  it('counts `export KEY=` lines as settings too', () => {
+    expect(linesSetting('QUICKNODE_STREAMS_DATA_DIR=a\nexport QUICKNODE_STREAMS_DATA_DIR=b\n#QUICKNODE_STREAMS_DATA_DIR=c', 'QUICKNODE_STREAMS_DATA_DIR')).toHaveLength(2);
   });
 });

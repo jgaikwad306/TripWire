@@ -17,6 +17,7 @@ import {
   nodeCheck,
   renderChecks,
   replayCheck,
+  secretEntries,
   streamProgress,
   tunnelUrlIn,
   type CheckResult,
@@ -108,11 +109,29 @@ async function demoCheck(args: string[]): Promise<void> {
 // ── live ──
 
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+/** Thrown by a wait when Ctrl+C (or an error elsewhere) asked demo:live to stop. */
+class Stopped extends Error {
+  constructor() {
+    super('stopped');
+  }
+}
+type ShouldStop = () => boolean;
+/** Sleeps in short steps so a stop request ends the wait within half a second. */
+async function pause(ms: number, stop: ShouldStop): Promise<void> {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (stop()) throw new Stopped();
+    await sleep(Math.min(500, until - Date.now()));
+  }
+  if (stop()) throw new Stopped();
+}
 const tsx = () => join(process.cwd(), 'node_modules', '.bin', 'tsx');
 
 /** Logs a child's output to a file, and optionally to the terminal with a prefix. */
 function capture(child: ChildProcess, logFile: string, echo?: string, onLine?: (line: string) => void): void {
   const file = createWriteStream(logFile, { flags: 'a' });
+  file.on('error', (err) => console.error(`   (could not write ${logFile}: ${err.message})`));
   for (const stream of [child.stdout, child.stderr]) {
     if (!stream) continue;
     createInterface({ input: stream }).on('line', (line) => {
@@ -121,7 +140,8 @@ function capture(child: ChildProcess, logFile: string, echo?: string, onLine?: (
       onLine?.(line);
     });
   }
-  child.once('exit', () => file.end());
+  // 'close' comes after the child's stdout and stderr are drained; 'exit' can come before.
+  child.once('close', () => file.end());
 }
 
 async function monitorStatus() {
@@ -158,18 +178,23 @@ async function demoLive(args: string[]): Promise<void> {
   const logs = join(directory, 'demo-logs');
   mkdirSync(logs, { recursive: true });
   const children: { name: string; child: ChildProcess; critical: boolean }[] = [];
+  let awake: ChildProcess | undefined;
   let stopping = false;
-  const stopAll = (why: 'signal' | 'error' = 'signal') => {
+  const stop: ShouldStop = () => stopping;
+  const stopAll = (why: 'sigint' | 'sigterm' | 'error') => {
     if (stopping) return;
     stopping = true;
     console.log(why === 'error' ? '\nStopping the monitor and tunnel because of the error below.' : '\nStopping: the dashboard finishes its current scenario first…');
-    // Ctrl+C already reached every child in this terminal; this covers the other ways out.
-    for (const { child } of children) if (child.exitCode === null) child.kill('SIGINT');
+    // Ctrl+C in this terminal already reached every child, and the dashboard stops at once on a
+    // second SIGINT, so only the other ways out are forwarded. Anything still running in 20 s is killed.
+    if (why !== 'sigint') for (const { child } of children) if (child.exitCode === null) child.kill('SIGINT');
     const force = setTimeout(() => {
       for (const { child } of children) if (child.exitCode === null) child.kill('SIGKILL');
     }, 20_000);
     force.unref();
   };
+  const running = () => children.filter((c) => c.child.exitCode === null && c.child.signalCode === null);
+  const allExited = () => Promise.all(running().map((c) => new Promise((done) => c.child.once('exit', done))));
   const track = (name: string, child: ChildProcess, critical: boolean) => {
     children.push({ name, child, critical });
     child.once('exit', (code, signal) => {
@@ -180,14 +205,18 @@ async function demoLive(args: string[]): Promise<void> {
       }
     });
   };
-  const onSignal = () => stopAll('signal');
-  process.once('SIGINT', onSignal);
-  process.once('SIGTERM', onSignal);
+  const onSigint = () => stopAll('sigint');
+  const onSigterm = () => stopAll('sigterm');
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
 
   try {
     // 2. Monitor: reuse one already serving this data directory, else start it.
     console.log('\n2. Streams monitor');
     if (await monitorStatus()) {
+      // The tunnel always forwards to the default webhook port; a monitor on another port would never get QuickNode's posts.
+      const listening = await fetch(`http://127.0.0.1:${WEBHOOK_PORT}/webhooks/quicknode`, { signal: AbortSignal.timeout(3000) }).then(() => true, () => false);
+      if (!listening) throw new Error(`A Streams monitor is running for ${directory}, but nothing answers on port ${WEBHOOK_PORT}. Stop it (Ctrl+C where it runs) and run demo:live again.`);
       console.log(`   already running for ${directory}; reusing it`);
     } else {
       const monitor = spawn(tsx(), ['src/cli.ts', 'streams', 'serve'], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -197,7 +226,7 @@ async function demoLive(args: string[]): Promise<void> {
       while (!(await monitorStatus())) {
         if (monitor.exitCode !== null) throw new Error(`The monitor exited (code ${monitor.exitCode}); see ${join(logs, 'monitor.log')}`);
         if (Date.now() > deadline) throw new Error(`The monitor did not start within a minute; see ${join(logs, 'monitor.log')}`);
-        await sleep(1000);
+        await pause(1000, stop);
       }
       console.log(`   running (log: ${join(logs, 'monitor.log')})`);
     }
@@ -216,27 +245,29 @@ async function demoLive(args: string[]): Promise<void> {
     while (!url || !connected) {
       if (tunnel.exitCode !== null) throw new Error(`cloudflared exited (code ${tunnel.exitCode}); see ${join(logs, 'tunnel.log')}`);
       if (Date.now() > tunnelDeadline) throw new Error(`No tunnel within 90s; see ${join(logs, 'tunnel.log')}`);
-      await sleep(500);
+      await pause(500, stop);
     }
     const webhookUrl = `${url}/webhooks/quicknode`;
     console.log(`   ${webhookUrl}`);
-    await waitReachable(webhookUrl);
+    await waitReachable(webhookUrl, stop);
 
     // 4. Point the Stream at the tunnel: creates it on first run, re-targets it after a restart.
     console.log(`\n4. QuickNode Stream (backfill ${backfill} blocks)`);
     const { provisionStream } = await import('../streams/commands.js');
     const { createArcClient } = await import('../chain/arc.js');
     const head = Number(await createArcClient().getBlockNumber({ cacheTime: 0 }));
-    const config = await withRetries(() =>
+    if (stop()) throw new Stopped();
+    const config = await withRetries(stop, () =>
       provisionStream({ client: streamClient(), key: process.env.QUICKNODE_API_KEY!.trim(), webhookUrl, backfillBlocks: backfill, head, directory }),
     );
     console.log(`   Stream ${config.streamId}, live after block ${config.liveBoundary}`);
 
     // 5. Wait until the monitor has the whole backfill and live data.
     console.log('\n5. Waiting for the Stream to be ready (usually 5–10 minutes)');
-    const ready = await waitReady(waitMs);
+    const ready = await waitReady(waitMs, stop);
     if (!ready) console.log('   Not ready yet. Starting anyway: guarded spending stays blocked until it is (npm run cli streams status).');
 
+    if (stop()) throw new Stopped();
     if (values['no-dashboard']) {
       console.log('\nStream ready. Monitor and tunnel keep running; Ctrl+C stops them.');
     } else {
@@ -249,19 +280,20 @@ async function demoLive(args: string[]): Promise<void> {
 
     // Terminal 4 of the runbook: keep the Mac awake while this runs.
     if (process.platform === 'darwin') {
-      const awake = spawn('caffeinate', ['-dims', '-w', String(process.pid)], { stdio: 'ignore' });
-      track('caffeinate', awake, false);
+      // Not awaited: it waits for this process, so waiting for it would never end.
+      awake = spawn('caffeinate', ['-dims', '-w', String(process.pid)], { stdio: 'ignore' });
       console.log('   (keeping the Mac awake; keep it plugged in)');
     }
 
-    await Promise.all(children.filter((c) => c.child.exitCode === null).map((c) => new Promise((done) => c.child.once('exit', done))));
+    await allExited();
   } catch (err) {
-    stopAll('error');
-    await Promise.all(children.filter((c) => c.child.exitCode === null).map((c) => new Promise((done) => c.child.once('exit', done))));
-    throw err;
+    if (!(err instanceof Stopped)) stopAll('error');
+    await allExited();
+    if (!(err instanceof Stopped)) throw err;
   } finally {
-    process.off('SIGINT', onSignal);
-    process.off('SIGTERM', onSignal);
+    awake?.kill();
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
   }
   console.log('\nStopped. Pause the Stream so it stops posting to a dead tunnel:');
   console.log('  dashboard.quicknode.com → Streams → "TripWire USDC wallet safety" → Pause');
@@ -303,7 +335,7 @@ export function probeVia(url: string, address: string): Promise<number | undefin
  * two to appear in DNS, and macOS keeps a "not found" answer for a while longer, so this
  * resolves through public DNS rather than this Mac's resolver.
  */
-async function waitReachable(url: string): Promise<boolean> {
+async function waitReachable(url: string, stop: ShouldStop): Promise<boolean> {
   const host = new URL(url).hostname;
   const deadline = Date.now() + 180_000;
   let said = false;
@@ -319,14 +351,14 @@ async function waitReachable(url: string): Promise<boolean> {
       console.log('   waiting for the tunnel to appear in public DNS (can take a minute or two)…');
       said = true;
     }
-    await sleep(3000);
+    await pause(3000, stop);
   }
   console.log('   Still not reachable from the internet after 3 minutes; trying anyway.');
   return false;
 }
 
 /** QuickNode refuses a Stream whose webhook it cannot reach yet; give a just-made tunnel a few more tries. */
-async function withRetries<T>(attempt: () => Promise<T>): Promise<T> {
+async function withRetries<T>(stop: ShouldStop, attempt: () => Promise<T>): Promise<T> {
   for (let tries = 1; ; tries++) {
     try {
       return await attempt();
@@ -334,12 +366,12 @@ async function withRetries<T>(attempt: () => Promise<T>): Promise<T> {
       const message = err instanceof Error ? err.message : String(err);
       if (tries >= 4 || !/returned 422/.test(message)) throw err;
       console.log(`   QuickNode refused it (${message}); retrying in 30s (${tries}/3)…`);
-      await sleep(30_000);
+      await pause(30_000, stop);
     }
   }
 }
 
-async function waitReady(waitMs: number): Promise<boolean> {
+async function waitReady(waitMs: number, stop: ShouldStop): Promise<boolean> {
   const deadline = Date.now() + waitMs;
   let last = '';
   while (Date.now() < deadline) {
@@ -354,7 +386,7 @@ async function waitReady(waitMs: number): Promise<boolean> {
         console.log(`   Spending is frozen by an alert. Once reviewed: npm run cli streams unfreeze -- --alert-id '${alert.id}' --reason 'Reviewed testnet transfer'`);
       }
     }
-    await sleep(10_000);
+    await pause(10_000, stop);
   }
   return false;
 }
@@ -366,19 +398,30 @@ async function demoZip(args: string[]): Promise<void> {
   const root = process.cwd();
   const name = basename(root);
   const out = resolve(values.out);
+  // What goes in comes from git: tracked files plus new ones that .gitignore does not exclude.
+  // So .env and .env.*, Circle's recovery file, .data, logs and node_modules stay out by the
+  // repo's own rules, not by a second list that can drift from them.
+  const listed = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8' });
+  if (listed.error || listed.status !== 0) throw new Error('demo:zip needs a git checkout of TripWire (run it in the cloned repo).');
+  const files = listed.stdout.split('\0').filter((f) => f && !f.startsWith('.claude/') && !f.startsWith('reports/') && f !== 'node_modules' && !f.startsWith('node_modules/') && existsSync(join(root, f)));
+  const unsafe = secretEntries(files, name);
+  if (unsafe.length) throw new Error(`These would be zipped but look like secrets; add them to .gitignore first: ${unsafe.join(', ')}`);
   if (existsSync(out)) rmSync(out);
-  const exclude = [`${name}/node_modules/*`, `${name}/.data/*`, `${name}/.claude/*`, `${name}/.env`, `${name}/reports/*`, '*/node_modules/*', '*.DS_Store'];
-  const zip = spawnSync('zip', ['-r', '-q', out, name, '-x', ...exclude], { cwd: dirname(root), stdio: 'inherit' });
+  const zip = spawnSync('zip', ['-q', out, '-@'], { cwd: dirname(root), input: files.map((f) => `${name}/${f}`).join('\n'), stdio: ['pipe', 'inherit', 'inherit'] });
   if (zip.error || zip.status !== 0) throw new Error(`zip failed${zip.error ? `: ${zip.error.message}` : ` (exit ${zip.status})`}`);
   // Never hand over secrets: check what actually went in.
   const listing = spawnSync('zipinfo', ['-1', out], { encoding: 'utf8' });
-  const entries = listing.stdout.split('\n');
-  const leaked = entries.filter((e) => e === `${name}/.env` || /\/\.env$/.test(e) || /(^|\/)\.data\//.test(e));
+  if (listing.error || listing.status !== 0) {
+    rmSync(out, { force: true });
+    throw new Error('Could not list the zip to check it for secrets (zipinfo failed); it was deleted.');
+  }
+  const entries = listing.stdout.split('\n').filter(Boolean);
+  const leaked = secretEntries(entries, name);
   if (leaked.length) {
     rmSync(out);
     throw new Error(`Refusing to keep a zip with secrets in it (${leaked.join(', ')}); it was deleted.`);
   }
-  console.log(`${out} (${entries.filter(Boolean).length} files). No node_modules, .data, .claude or .env.`);
+  console.log(`${out} (${entries.length} files). Built from git: nothing .gitignore excludes (.env, .data, node_modules, recovery files).`);
   console.log('AirDrop it, unzip into the home folder, then: cd ~/TripWire && npm install');
   console.log('Send the .env separately, by AirDrop or USB only.');
 }

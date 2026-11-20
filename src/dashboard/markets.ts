@@ -1,6 +1,6 @@
 import { formatUsdc } from '../constants.js';
-import { GeminiClient, GeminiMarketData } from '../gemini/client.js';
-import { MARKET_TASK, marketDataUrl, marketPolicy } from '../gemini/demo.js';
+import { GEMINI_PRODUCTION_URL, GeminiClient, GeminiMarketData } from '../gemini/client.js';
+import { MARKET_TASK, marketPolicy } from '../gemini/demo.js';
 import { loadSnapshot, pickDemoMarket, type DemoMarket, type MarketSnapshot } from '../gemini/snapshot.js';
 import type { MarketData } from '../gemini/venue.js';
 import { CHECK } from '../guard/checks.js';
@@ -54,7 +54,9 @@ export class MarketBoardSource {
   private timer?: ReturnType<typeof setInterval>;
 
   constructor(private readonly opts: { env: NodeJS.ProcessEnv; live: boolean; data?: MarketData; suite: string[]; focused: string[]; now?: () => number }) {
-    if (opts.live) this.data = opts.data ?? new GeminiMarketData(new GeminiClient({ baseUrl: marketDataUrl(opts.env) }));
+    // The board's event comes from the committed snapshot, which is production data, so its live
+    // prices must come from production too: the sandbox 404s on production tickers.
+    if (opts.live) this.data = opts.data ?? new GeminiMarketData(new GeminiClient({ baseUrl: opts.env.GEMINI_MARKET_DATA_URL || GEMINI_PRODUCTION_URL }));
   }
 
   async board(): Promise<MarketBoard> {
