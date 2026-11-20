@@ -108,11 +108,44 @@ const checkPrice: MarketCheck = ({ request }, policy) => {
   return null;
 };
 
+/**
+ * Slippage is measured against the guard's read of the book, which an attacker can move by
+ * clearing the honest offers and resting its own (M3). The last trade and the far side of the
+ * book do not move that way, so a reference price far from them means the book is not a fair
+ * price to trade at, whatever limit the agent picked.
+ */
+function checkDislocation(facts: MarketFacts, policy: MarketPolicy, contract: GeminiContract | undefined, reference: bigint, label: string): Decision | null {
+  const max = policy.maxBookDislocation;
+  if (max === undefined) return null;
+  const { side, outcome } = facts.request;
+  const inOutcome = (yes: string | undefined) => (yes === undefined ? undefined : outcome === 'yes' ? units(yes) : flip(units(yes)));
+  const ask = facts.book?.asks[0]?.price ?? contract?.bestAsk;
+  const bid = facts.book?.bids[0]?.price ?? contract?.bestBid;
+  // The far side of the book, in this order's outcome space: a buyer of YES is anchored by the
+  // YES bid, a buyer of NO by 1 − YES ask; sellers the other way round.
+  const far = side === 'buy' ? inOutcome(outcome === 'yes' ? bid : ask) : inOutcome(outcome === 'yes' ? ask : bid);
+  const last = inOutcome(contract?.lastTradePrice);
+  const anchors = [far, last].filter((v): v is bigint => v !== undefined);
+  if (anchors.length === 0) return null;
+  // Only the direction that hurts this order counts: a buyer is hurt by an offer far above
+  // every anchor, a seller by a bid far below them. A wiped-out bid side does not hurt a buyer.
+  const anchor = anchors.reduce((a, b) => (side === 'buy' ? (b > a ? b : a) : b < a ? b : a));
+  const gap = side === 'buy' ? reference - anchor : anchor - reference;
+  if (gap <= max) return null;
+  const which = anchor === last ? `the last trade at ${formatUsdc(anchor)}` : `the other side of the book at ${formatUsdc(anchor)}`;
+  return deny(
+    CHECK.slippage,
+    `Gemini's book for ${facts.request.symbol} is dislocated: the price to ${label} is ${formatUsdc(reference)}, ${formatUsdc(gap)} away from ${which} (max ${formatUsdc(max)}). It may have been swept; no order is placed against it.`,
+  );
+}
+
 const checkSlippage: MarketCheck = (facts, policy, _now, contract) => {
   const reference = referencePrice(facts, contract);
   const { side, outcome, limitPrice } = facts.request;
   const label = `${side} ${outcome.toUpperCase()}`;
   if (reference === undefined) return deny(CHECK.slippage, `Gemini shows no ${side === 'buy' ? 'offer' : 'bid'} to ${label} against, so the price cannot be checked.`);
+  const dislocation = checkDislocation(facts, policy, contract, reference, label);
+  if (dislocation) return dislocation;
   const price = units(limitPrice);
   if (side === 'buy') {
     const max = plusBps(reference, policy.slippageBps);
