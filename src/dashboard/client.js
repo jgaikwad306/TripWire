@@ -5,6 +5,44 @@
   const token = new URLSearchParams(location.search).get('token') || '';
   const h = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  // Live updates change the page in place. Replacing a section's HTML on every event moved
+  // everything below it, reset scroll inside long payloads, dropped text selections and broke
+  // the browser's scroll anchoring, so the page jumped while a run played. These touch only
+  // the nodes that changed; everything else keeps its identity.
+  const keyOf = (node) => node.nodeType === 1 ? node.getAttribute('data-key') || node.getAttribute('data-sequence') || node.getAttribute('data-scenario') || node.id || '' : '';
+  function morph(from, to) {
+    if (from.nodeType !== 1) { if (from.nodeValue !== to.nodeValue) from.nodeValue = to.nodeValue; return; }
+    for (const { name } of [...from.attributes]) {
+      // A <details> the reader opened stays open.
+      if (!to.hasAttribute(name) && !(name === 'open' && from.tagName === 'DETAILS')) from.removeAttribute(name);
+    }
+    for (const { name, value } of [...to.attributes]) if (from.getAttribute(name) !== value) from.setAttribute(name, value);
+    patchChildren(from, to);
+  }
+  function patchChildren(parent, next) {
+    const before = [...parent.childNodes], after = [...next.childNodes];
+    after.forEach((node, i) => {
+      const old = before[i];
+      if (!old) parent.appendChild(node);
+      else if (old.nodeType !== node.nodeType || old.nodeName !== node.nodeName || keyOf(old) !== keyOf(node)) parent.replaceChild(node, old);
+      else if (!old.isEqualNode(node)) morph(old, node);
+    });
+    for (let i = after.length; i < before.length; i++) before[i].remove();
+  }
+  const lastHtml = new WeakMap();
+  /** Sets an element's content from an HTML string, changing only what differs. */
+  function patch(el, html) {
+    if (!el || lastHtml.get(el) === html) return;
+    lastHtml.set(el, html);
+    // Without a real DOM (the unit tests' stub), a plain write is the same content.
+    if (typeof document.createElement !== 'function' || !el.childNodes) { el.innerHTML = html; return; }
+    const next = document.createElement('template');
+    next.innerHTML = html;
+    patchChildren(el, next.content);
+  }
+  /** Text and attribute writes only when the value changes: an unchanged write still costs a layout. */
+  const setText = (el, value) => { if (el && el.textContent !== value) el.textContent = value; };
+  const setProp = (el, prop, value) => { if (el && el[prop] !== value) el[prop] = value; };
   // Background ledger speeds (fractions of scroll) and tile sizes; tiles match dashboard.css.
   // Hero chain: trails the scroll by heroLag up to heroMax, its bits flip every bitStep px,
   // and the pending block's dashed border runs at dashRate.
@@ -63,7 +101,7 @@
   };
   const checks = { 'intent-match': 'Payment must match the recorded quote', allowlist: 'Only approved recipients can be paid', price: 'Price must match the reference price', limits: 'Spending must stay within the owner’s limits', loop: 'Repeated payments are limited', approval: 'Only the owner can approve this payment', token: 'Payment must use the real USDC contract', signature: 'The authorization must be signed by the wallet it spends from', 'tx-exists': 'The transaction must exist onchain', amount: 'The full amount must be paid', replay: 'A payment can only be used once', recipient: 'Payment must reach the expected wallet', 'tx-status': 'The transaction must be confirmed', wallet: 'The wallet must complete the transfer', chain: 'Payment must be verifiable onchain', reconcile: 'An earlier payment must be reconciled', resource: 'Only approved API resources are paid', budget: 'The declared task must stay within its budget', 'rate-limit': 'Payments to one endpoint are rate-limited', duplicate: 'The same request is paid once; an API that took payment without delivering is not paid again', network: 'Payment must be on Arc Testnet', monitoring: 'Wallet monitoring must be healthy' };
   const phases = ['guarded', 'unguarded'];
-  let gatewayLatest = null, catalog = [], capabilities, settings, run = null, rows = new Map(), selected = 'prompt-injection', following = true, sequence = 0, source, frame, lastEvidence = '', apiError = '';
+  let gatewayLatest = null, catalog = [], capabilities, settings, run = null, rows = new Map(), selected = 'prompt-injection', following = true, sequence = 0, source, frame, apiError = '';
   const key = (phase, id) => phase + ':' + id;
   const row = (phase, id) => {
     const k = key(phase, id);
@@ -150,7 +188,7 @@
   function hydrate(snapshot) {
     source?.close();
     run = snapshot.run;
-    rows = new Map(); sequence = 0; lastEvidence = '';
+    rows = new Map(); sequence = 0; evidenceShown.key = '';
     if (run) {
       settings = { ...run.config };
       // Reconstruct from the journal while retaining the server's terminal status.
@@ -189,13 +227,13 @@
   function renderQueue() {
     let group = '';
     const focusedId = document.activeElement?.dataset.scenario;
-    $('queue').innerHTML = queueIds().map((id, i) => {
+    patch($('queue'), queueIds().map((id, i) => {
       const s = catalog.find((item) => item.id === id), nextGroup = s.category === 'honest' ? 'HONEST CONTROLS' : 'ATTACK SCENARIOS';
       const heading = group === nextGroup ? '' : `<div class="queue-group">${nextGroup}</div>`; group = nextGroup;
       return heading + `<button class="queue-item${selected === id ? ' selected' : ''}" data-scenario="${h(id)}" ${selected === id ? 'aria-current="true"' : ''}><span class="queue-index">${String(i + 1).padStart(2, '0')}</span><span><span class="queue-name">${h(s.name)}</span><span class="queue-category">${s.category === 'honest' ? 'Honest control' : s.category === 'api' ? 'Paid API attack' : h(s.category.charAt(0).toUpperCase() + s.category.slice(1)) + ' attack'}</span><span class="queue-verdicts">${phases.map((phase) => { const st = status(row(phase, id)); const tone = st.color === 'var(--teal)' ? 'safe' : st.color === 'var(--coral)' ? 'danger' : st.color === 'var(--amber)' ? 'busy' : 'pending'; return `<span title="${phase === 'guarded' ? 'With Tripwire' : 'Without Tripwire'}: ${h(st.text)}"><span class="dot ${tone}"></span>${phase === 'guarded' ? 'ON' : 'OFF'} · ${h(st.text)}</span>`; }).join('')}</span></span></button>`;
-    }).join('');
-    if (focusedId) document.querySelector(`[data-scenario="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
-    $('queue-count').textContent = String(queueIds().length).padStart(2, '0');
+    }).join(''));
+    if (focusedId && document.activeElement?.dataset?.scenario !== focusedId) document.querySelector(`[data-scenario="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
+    setText($('queue-count'), String(queueIds().length).padStart(2, '0'));
   }
   function txLink(hash) {
     const text = h(String(hash).slice(0, 10) + '…' + String(hash).slice(-5));
@@ -242,7 +280,7 @@
     const counts = blockedByRule();
     for (const rule of guardSummary.rules) {
       const el = $('rule-count-' + rule.check);
-      if (el) el.textContent = counts[rule.check] ? `blocked ${counts[rule.check]}` : '';
+      setText(el, counts[rule.check] ? `blocked ${counts[rule.check]}` : '');
     }
   }
   // Prediction markets tab: odds and history come from /api/markets (the server reads Gemini).
@@ -260,15 +298,15 @@
     if (!b) return;
     $('markets-source').textContent = b.source === 'live' ? `Live Gemini data · ${new Date(b.updatedAt).toLocaleTimeString()}` : 'Gemini snapshot (live data unavailable)';
     $('odds-event').textContent = `${b.event.title} · ${b.event.ticker}${b.event.expiresAt ? ' · closes ' + new Date(b.event.expiresAt).toLocaleString() : ''}`;
-    $('odds-board').innerHTML = b.event.contracts.map((c) => {
+    patch($('odds-board'), b.event.contracts.map((c) => {
       const ask = Number(c.ask ?? c.last ?? 0);
       return `<div class="odds-row ${c.task ? 'task' : ''}"><span>${h(c.label)}${c.task ? ' · task' : ''}</span><span class="odds-bar" role="img" aria-label="YES ask ${h(c.ask ?? 'none')}"><span style="width:${Math.round(Math.min(1, ask) * 100)}%"></span></span><span class="odds-price">${h(c.bid ?? '—')} / ${h(c.ask ?? '—')}</span></div>`;
-    }).join('');
+    }).join(''));
     const points = b.history;
     $('odds-sparkline').innerHTML = sparkline(points, 'ask') + sparkline(points, 'last');
     $('odds-history-note').textContent = points.length < 2 ? 'History builds up while this page is open (one read every 15 s).' : `Best ask (solid) and last trade (dashed) of ${b.task.label}, ${points.length} reads.`;
-    $('market-mandate').innerHTML = b.mandate.map((m) => `<div><dt>${h(m.label)}</dt><dd>${h(m.value)}</dd></div>`).join('');
-    $('market-rules').innerHTML = b.rules.map((rule, i) => `<li class="guard-rule" tabindex="-1"><span class="rule-step">${String(i + 1).padStart(2, '0')}</span><div><p class="rule-name"><code class="rule-check">${h(rule.check)}</code></p><p class="rule-line">${h(rule.line)}</p></div></li>`).join('');
+    patch($('market-mandate'), b.mandate.map((m) => `<div><dt>${h(m.label)}</dt><dd>${h(m.value)}</dd></div>`).join(''));
+    patch($('market-rules'), b.rules.map((rule, i) => `<li class="guard-rule" tabindex="-1"><span class="rule-step">${String(i + 1).padStart(2, '0')}</span><div><p class="rule-name"><code class="rule-check">${h(rule.check)}</code></p><p class="rule-line">${h(rule.line)}</p></div></li>`).join(''));
   }
   function loadMarkets() {
     api('/api/markets').then((board) => { marketBoard = board; renderMarkets(); }).catch((err) => { $('odds-event').textContent = err.message; });
@@ -412,29 +450,32 @@
     const counts = {};
     for (const id of queueIds()) { const c = catalog.find((s) => s.id === id)?.category; if (c) counts[c] = (counts[c] || 0) + 1; }
     const labels = { api: 'Paid API attacks', market: 'Market attacks', send: 'Send attacks', receive: 'Receive attacks', hold: 'Hold attacks', honest: 'Honest controls' };
-    $('hero-categories').innerHTML = Object.keys(labels).filter((c) => counts[c]).map((c) => `<li>${labels[c]} <span class="count">(${counts[c]})</span></li>`).join('');
+    patch($('hero-categories'), Object.keys(labels).filter((c) => counts[c]).map((c) => `<li>${labels[c]} <span class="count">(${counts[c]})</span></li>`).join(''));
   }
   function renderMetrics() {
     const states = [...rows.values()], results = states.filter((s) => s.result).map((s) => s.result), total = queueIds().length * 2;
-    $('metric-progress').innerHTML = `${results.length} <span>/ ${total}</span>`;
-    $('progress-bar').style.width = (total ? results.length / total * 100 : 0) + '%';
-    $('metric-progress-note').textContent = run ? isRunning() ? 'Completed so far · outcomes measured' : run.status === 'completed' ? 'Both passes complete' : 'Partial run · remaining scenarios not run' : 'Two passes. Same attack scenarios.';
-    $('metric-guards').textContent = String([...rows.entries()].filter(([k]) => k.startsWith('guarded:')).flatMap(([, s]) => s.decisions).filter((d) => !d.decision.allowed).length);
+    patch($('metric-progress'), `${results.length} <span>/ ${total}</span>`);
+    const width = (total ? results.length / total * 100 : 0) + '%';
+    if ($('progress-bar').style.width !== width) $('progress-bar').style.width = width;
+    setText($('metric-progress-note'), run ? isRunning() ? 'Completed so far · outcomes measured' : run.status === 'completed' ? 'Both passes complete' : 'Partial run · remaining scenarios not run' : 'Two passes. Same attack scenarios.');
+    setText($('metric-guards'), String([...rows.entries()].filter(([k]) => k.startsWith('guarded:')).flatMap(([, s]) => s.decisions).filter((d) => !d.decision.allowed).length));
     let unknown = 0;
     for (const phase of phases) {
       const rs = queueIds().map((id) => row(phase, id).result).filter(Boolean), known = rs.filter((r) => r.measurementStatus !== 'unknown');
       const count = rs.length - known.length; unknown += count;
       const loss = known.reduce((sum, r) => sum + BigInt(r.usdcLost), 0n);
-      $('metric-loss-' + (phase === 'guarded' ? 'on' : 'off')).textContent = known.length ? units(loss) + (count ? ' + ?' : '') : count ? 'Unknown' : '—';
+      setText($('metric-loss-' + (phase === 'guarded' ? 'on' : 'off')), known.length ? units(loss) + (count ? ' + ?' : '') : count ? 'Unknown' : '—');
     }
-    $('metric-loss-note').textContent = unknown ? `${unknown} outcome${unknown === 1 ? '' : 's'} unknown · excluded from measured totals` : run && isRunning() ? 'Measured so far · includes unpaid goods value' : 'Includes overpayments and unpaid goods value';
+    setText($('metric-loss-note'), unknown ? `${unknown} outcome${unknown === 1 ? '' : 's'} unknown · excluded from measured totals` : run && isRunning() ? 'Measured so far · includes unpaid goods value' : 'Includes overpayments and unpaid goods value');
     const honest = results.filter((r) => r.category === 'honest' && r.passed).length, honestTotal = queueIds().filter((id) => catalog.find((s) => s.id === id)?.category === 'honest').length * 2;
     if (gatewayLatest) {
       const where = catalog.find((x) => x.id === gatewayLatest.scenarioId)?.name;
-      $('gateway-balances').textContent = `Circle Gateway balances: agent ${units(gatewayLatest.hot)} · seller ${units(gatewayLatest.merchant)} · attacker ${units(gatewayLatest.attacker)} USDC` + (where ? ` (${gatewayLatest.when === 'end' ? 'after' : 'before'} ${where}, ${gatewayLatest.phase || ''} pass)` : '');
+      const line = `Circle Gateway balances: agent ${units(gatewayLatest.hot)} · seller ${units(gatewayLatest.merchant)} · attacker ${units(gatewayLatest.attacker)} USDC` + (where ? ` (${gatewayLatest.when === 'end' ? 'after' : 'before'} ${where}, ${gatewayLatest.phase || ''} pass)` : '');
+      setText($('gateway-balances'), line);
+      if ($('gateway-balances').title !== line) $('gateway-balances').title = line;
     }
-    $('metric-honest').innerHTML = `${honest} <span>/ ${honestTotal}</span>`;
-    $('metric-honest-note').textContent = run?.status === 'completed' && !unknown ? `Safety score: ${run.reports.guarded.report.overall} guarded / ${run.reports.unguarded.report.overall} unguarded` : 'Protection that keeps payments working';
+    patch($('metric-honest'), `${honest} <span>/ ${honestTotal}</span>`);
+    setText($('metric-honest-note'), run?.status === 'completed' && !unknown ? `Safety score: ${run.reports.guarded.report.overall} guarded / ${run.reports.unguarded.report.overall} unguarded` : 'Protection that keeps payments working');
   }
   function evidenceLabel(event) {
     const d = event.data;
@@ -460,52 +501,80 @@
       default: return null;
     }
   }
+  // The evidence list only grows while one scenario is selected, so new events are appended;
+  // the whole list (every event's JSON) is rebuilt only when the scenario or run changes.
+  let evidenceShown = { key: '', last: 0 };
+  function evidenceRow(e, origin) {
+    return `<details class="evidence-row" data-sequence="${e.sequence}"><summary><span class="evidence-time">+${((new Date(e.timestamp).getTime() - origin) / 1000).toFixed(2)}s</span><span class="evidence-phase ${e.phase === 'unguarded' ? 'off' : ''}">${e.phase === 'guarded' ? 'GUARDED' : 'UNGUARDED'}</span>${h(evidenceLabel(e))}</summary><pre>${h(JSON.stringify(e.data, null, 2))}</pre></details>`;
+  }
   function renderEvidence() {
     const events = phases.flatMap((p) => row(p, selected).events).filter((e) => evidenceLabel(e)).sort((a, b) => a.sequence - b.sequence);
-    $('evidence-count').textContent = String(events.length).padStart(2, '0');
-    const signature = selected + ':' + (run?.id || '') + ':' + events.length;
-    if (signature === lastEvidence) return;
-    lastEvidence = signature;
-    const focusedSequence = document.activeElement?.closest?.('.evidence-row')?.dataset.sequence;
-    const open = new Set([...$('evidence').querySelectorAll('details[open]')].map((el) => el.dataset.sequence));
-    if (!events.length) { $('evidence').innerHTML = `<div class="evidence-empty">${icon('code')}Every tool call, payment decision, and transaction will be recorded here.</div>`; return; }
+    setText($('evidence-count'), String(events.length).padStart(2, '0'));
+    const key = selected + ':' + (run?.id || '');
+    if (!events.length) {
+      if (evidenceShown.key !== key || evidenceShown.last) $('evidence').innerHTML = `<div class="evidence-empty">${icon('code')}Every tool call, payment decision, and transaction will be recorded here.</div>`;
+      evidenceShown = { key, last: 0 };
+      return;
+    }
     const origin = new Date(run.events[0].timestamp).getTime();
-    $('evidence').innerHTML = events.map((e) => `<details class="evidence-row" data-sequence="${e.sequence}" ${open.has(String(e.sequence)) ? 'open' : ''}><summary><span class="evidence-time">+${((new Date(e.timestamp).getTime() - origin) / 1000).toFixed(2)}s</span><span class="evidence-phase ${e.phase === 'unguarded' ? 'off' : ''}">${e.phase === 'guarded' ? 'GUARDED' : 'UNGUARDED'}</span>${h(evidenceLabel(e))}</summary><pre>${h(JSON.stringify(e.data, null, 2))}</pre></details>`).join('');
-    if (focusedSequence) $('evidence').querySelector(`[data-sequence="${CSS.escape(focusedSequence)}"] summary`)?.focus({ preventScroll: true });
+    if (evidenceShown.key === key && evidenceShown.last) {
+      const fresh = events.filter((e) => e.sequence > evidenceShown.last);
+      if (!fresh.length) return;
+      const more = fresh.map((e) => evidenceRow(e, origin)).join('');
+      if (typeof $('evidence').insertAdjacentHTML === 'function') $('evidence').insertAdjacentHTML('beforeend', more);
+      else $('evidence').innerHTML += more;
+    } else {
+      $('evidence').innerHTML = events.map((e) => evidenceRow(e, origin)).join('');
+    }
+    evidenceShown = { key, last: events.at(-1).sequence };
   }
   function renderDownloads() {
     const files = run ? [...Object.keys(run.reports).flatMap((phase) => ['json', 'md', 'html'].map((ext) => `${phase}.${ext}`)), ...(run.status === 'completed' ? ['comparison.html'] : [])] : [];
-    $('downloads').hidden = !files.length;
-    $('downloads').innerHTML = `<strong>${run?.status === 'partial' ? 'Partial run reports' : 'Run reports'}</strong>${files.map((file) => `<a href="${h(apiUrl(`/api/runs/${run.id}/report/${file}`))}">${h(file)}</a>`).join('')}`;
+    if ($('downloads').hidden !== !files.length) $('downloads').hidden = !files.length;
+    patch($('downloads'), `<strong>${run?.status === 'partial' ? 'Partial run reports' : 'Run reports'}</strong>${files.map((file) => `<a href="${h(apiUrl(`/api/runs/${run.id}/report/${file}`))}">${h(file)}</a>`).join('')}`);
   }
   function render() {
     if (!capabilities) return;
     const ids = queueIds();
     if (!ids.includes(selected)) selected = ['api-prompt-injection', 'prompt-injection'].find((id) => ids.includes(id)) ?? ids[0];
     const s = meta(), active = isRunning(), config = run?.config || settings, missing = readiness(settings);
-    $('sidebar-network').textContent = config.network === 'fake' ? 'Simulated ledger' : 'Arc Testnet';
-    $('sidebar-agent').textContent = config.agent === 'naive' ? 'Scripted agent' : config.agent === 'grok-careful' ? 'Grok · careful prompt' : 'Grok agent';
-    $('footer-network').textContent = config.network === 'fake' ? 'Offline · No real funds moved' : 'Arc Testnet · Testnet USDC';
-    $('start').hidden = Boolean(active); $('stop').hidden = !active; $('stop').disabled = run?.status === 'stopping';
-    $('stop').textContent = run?.status === 'stopping' ? 'Finishing current scenario…' : 'Stop after scenario';
-    $('start').disabled = Boolean(missing.length); $('configure').disabled = Boolean(active); $('choose-scenarios').disabled = Boolean(active);
+    setText($('sidebar-network'), config.network === 'fake' ? 'Simulated ledger' : 'Arc Testnet');
+    setText($('sidebar-agent'), config.agent === 'naive' ? 'Scripted agent' : config.agent === 'grok-careful' ? 'Grok · careful prompt' : 'Grok agent');
+    setText($('footer-network'), config.network === 'fake' ? 'Offline · No real funds moved' : 'Arc Testnet · Testnet USDC');
+    setProp($('start'), 'hidden', Boolean(active)); setProp($('stop'), 'hidden', !active); setProp($('stop'), 'disabled', run?.status === 'stopping');
+    setText($('stop'), run?.status === 'stopping' ? 'Finishing current scenario…' : 'Stop after scenario');
+    setProp($('start'), 'disabled', Boolean(missing.length)); setProp($('configure'), 'disabled', Boolean(active)); setProp($('choose-scenarios'), 'disabled', Boolean(active));
     const setupLabel = (settings.network === 'arc-testnet' ? 'Arc Testnet' : 'Offline ledger') + ' + ' + (settings.agent === 'naive' ? 'scripted agent' : 'Grok');
     const notice = apiError || run?.error || run?.warning || (!run && missing.length ? `${setupLabel} is selected. Configure ${missing.join(', ')} in .env, then restart; or choose another mode in Configure.` : '');
-    $('notice').hidden = !notice; $('notice').textContent = notice;
-    $('category').textContent = s.category === 'honest' ? 'HONEST CONTROL' : s.category === 'api' ? 'PAID API ATTACK' : s.category === 'market' ? 'MARKET ATTACK' : s.category.toUpperCase() + ' ATTACK'; $('category').className = 'pill' + (s.category === 'honest' ? ' honest' : '');
-    $('scenario-number').textContent = s.number.startsWith('H') ? 'CONTROL ' + s.number : 'ATTACK ' + s.number.replace('#', '').padStart(2, '0');
-    $('attack-title').textContent = s.name; $('attack-goal').textContent = s.goal; $('attack-description').textContent = s.description;
-    $('follow').hidden = following || !active; $('run-status').className = 'run-status' + (active ? ' live' : '');
-    $('run-status').textContent = !run ? 'Ready to run' : active ? (run.phase === 'guarded' ? 'Guarded' : 'Unguarded') + ' pass · ' + (run.status === 'stopping' ? 'stopping' : 'live') : run.status === 'completed' ? 'Comparison complete' : run.status === 'partial' ? 'Partial run' : 'Run failed';
-    $('run-caption').textContent = !run ? 'Waiting for a run · No funds have moved' : config.network === 'fake' ? 'Simulated ledger · No real funds moved' : 'Arc Testnet · Actual testnet transactions';
-    $('event-count').textContent = sequence + ' EVENTS RECORDED';
-    const openAnswers = [...$('comparison').querySelectorAll('.agent-answer')].map((el) => el.open);
-    const focusedAnswer = [...document.querySelectorAll('.agent-answer summary')].indexOf(document.activeElement);
-    $('comparison').innerHTML = phases.map((p) => renderColumn(p, s)).join('');
-    [...$('comparison').querySelectorAll('.agent-answer')].forEach((el, i) => { el.open = Boolean(openAnswers[i]); });
-    if (focusedAnswer >= 0) document.querySelectorAll('.agent-answer summary')[focusedAnswer]?.focus({ preventScroll: true });
+    setProp($('notice'), 'hidden', !notice); setText($('notice'), notice);
+    setText($('category'), s.category === 'honest' ? 'HONEST CONTROL' : s.category === 'api' ? 'PAID API ATTACK' : s.category === 'market' ? 'MARKET ATTACK' : s.category.toUpperCase() + ' ATTACK'); setProp($('category'), 'className', 'pill' + (s.category === 'honest' ? ' honest' : ''));
+    setText($('scenario-number'), s.number.startsWith('H') ? 'CONTROL ' + s.number : 'ATTACK ' + s.number.replace('#', '').padStart(2, '0'));
+    setText($('attack-title'), s.name); setText($('attack-goal'), s.goal); setText($('attack-description'), s.description);
+    setProp($('follow'), 'hidden', following || !active); setProp($('run-status'), 'className', 'run-status' + (active ? ' live' : ''));
+    setText($('run-status'), !run ? 'Ready to run' : active ? (run.phase === 'guarded' ? 'Guarded' : 'Unguarded') + ' pass · ' + (run.status === 'stopping' ? 'stopping' : 'live') : run.status === 'completed' ? 'Comparison complete' : run.status === 'partial' ? 'Partial run' : 'Run failed');
+    setText($('run-caption'), !run ? 'Waiting for a run · No funds have moved' : config.network === 'fake' ? 'Simulated ledger · No real funds moved' : 'Arc Testnet · Actual testnet transactions');
+    setText($('event-count'), sequence + ' EVENTS RECORDED');
+    // Keyed by scenario: switching scenarios swaps the columns, updates within one patch them.
+    patch($('comparison'), phases.map((p) => renderColumn(p, s).replace('<article ', `<article data-key="${h(p + ':' + s.id)}" `)).join(''));
     renderQueue(); renderHero(); renderMetrics(); renderEvidence(); renderDownloads();
     loadGuard(config.network); renderGuardCounts();
+    holdHeights(active);
+  }
+  // While a run plays, the scenario heading and the comparison never shrink: a new scenario
+  // starts with short placeholders and a different title, and letting the page collapse under
+  // the viewer, then grow back as steps arrive, is what made it jump. Released when the run ends.
+  const held = new Map();
+  function holdHeights(active) {
+    const blocks = [document.querySelector('.stage-heading'), document.querySelector('.attack-explainer'), $('comparison')];
+    for (const el of blocks) {
+      if (!el || typeof el.getBoundingClientRect !== 'function') continue;
+      if (!active) {
+        if (held.has(el)) { el.style.minHeight = ''; held.delete(el); }
+        continue;
+      }
+      const height = Math.ceil(el.getBoundingClientRect().height);
+      if (height > (held.get(el) || 0)) { held.set(el, height); el.style.minHeight = height + 'px'; }
+    }
   }
   function formConfig() { return { network: $('network').value, agent: $('agent').value, scenarioIds: [...document.querySelectorAll('#scenario-options input:checked')].map((input) => input.value) }; }
   function updateReadiness() {
@@ -527,7 +596,7 @@
   $('settings-form').addEventListener('submit', (event) => {
     event.preventDefault(); const draft = formConfig();
     if (!draft.scenarioIds.length) { $('readiness').textContent = 'Select at least one scenario.'; $('readiness').className = 'readiness missing'; return; }
-    settings = draft; source?.close(); run = null; rows = new Map(); sequence = 0; following = true; apiError = ''; lastEvidence = ''; $('settings').close(); schedule();
+    settings = draft; source?.close(); run = null; rows = new Map(); sequence = 0; following = true; apiError = ''; evidenceShown.key = ''; $('settings').close(); schedule();
   });
   VIEWS.forEach((view) => $('tab-' + view).addEventListener('click', () => selectView(view)));
   // Tab keyboard pattern: arrows move between tabs (and select them), Home and End jump.
@@ -572,15 +641,16 @@
     if (config.streamsEnabled) {
       const nativeUnits = (raw) => { const n = BigInt(raw); return (n / 10n ** 18n).toString() + (n % 10n ** 18n ? '.' + (n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '') : ''); };
       const pollStreams = async () => {
-        const panel = $('streams-monitor'); panel.hidden = false;
+        setProp($('streams-monitor'), 'hidden', false);
         try {
           const status = await api('/api/streams');
-          $('streams-state').textContent = status.frozen ? 'Spending frozen' : status.ready ? 'Monitoring live' : 'Spending blocked';
+          setText($('streams-state'), status.frozen ? 'Spending frozen' : status.ready ? 'Monitoring live' : 'Spending blocked');
           const coverage = status.startBlock === undefined ? '' : `Indexed blocks ${status.startBlock}–${status.coveredThrough}.`;
           const age = status.dataAgeSeconds == null ? '' : `Data age: ${status.dataAgeSeconds} seconds.`;
-          $('streams-coverage').textContent = [status.reason || 'Following Arc Testnet.', coverage, age].filter(Boolean).join(' ');
-          $('streams-details').innerHTML = (status.alerts || []).slice(-10).reverse().map(a => `<p><strong>${a.acknowledged ? 'Reviewed' : 'Alert'}:</strong> ${h(a.reason)} · ${h(nativeUnits(a.amountNative))} USDC → ${h(a.to)}<br><code>${h(a.id)}</code></p>`).join('') + (status.recentTransfers || []).slice(0, 5).map(t => `<p>${h(nativeUnits(t.amountNative))} USDC · ${h(t.from)} → ${h(t.to)} · block ${h(t.block)}</p>`).join('');
-        } catch { $('streams-state').textContent = 'Monitoring unavailable'; $('streams-coverage').textContent = 'Guarded spending is blocked until monitoring recovers.'; }
+          const line = [status.reason || 'Following Arc Testnet.', coverage, age].filter(Boolean).join(' ');
+          setText($('streams-coverage'), line); setProp($('streams-coverage'), 'title', line);
+          patch($('streams-details'), (status.alerts || []).slice(-10).reverse().map(a => `<p><strong>${a.acknowledged ? 'Reviewed' : 'Alert'}:</strong> ${h(a.reason)} · ${h(nativeUnits(a.amountNative))} USDC → ${h(a.to)}<br><code>${h(a.id)}</code></p>`).join('') + (status.recentTransfers || []).slice(0, 5).map(t => `<p>${h(nativeUnits(t.amountNative))} USDC · ${h(t.from)} → ${h(t.to)} · block ${h(t.block)}</p>`).join(''));
+        } catch { setText($('streams-state'), 'Monitoring unavailable'); setText($('streams-coverage'), 'Guarded spending is blocked until monitoring recovers.'); }
       };
       void pollStreams(); setInterval(pollStreams, 5000);
     }
