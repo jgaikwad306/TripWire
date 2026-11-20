@@ -2,6 +2,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+import { request as httpsRequest } from 'node:https';
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { latestJournal } from '../dashboard/journal.js';
@@ -158,10 +159,10 @@ async function demoLive(args: string[]): Promise<void> {
   mkdirSync(logs, { recursive: true });
   const children: { name: string; child: ChildProcess; critical: boolean }[] = [];
   let stopping = false;
-  const stopAll = () => {
+  const stopAll = (why: 'signal' | 'error' = 'signal') => {
     if (stopping) return;
     stopping = true;
-    console.log('\nStopping: the dashboard finishes its current scenario first…');
+    console.log(why === 'error' ? '\nStopping the monitor and tunnel because of the error below.' : '\nStopping: the dashboard finishes its current scenario first…');
     // Ctrl+C already reached every child in this terminal; this covers the other ways out.
     for (const { child } of children) if (child.exitCode === null) child.kill('SIGINT');
     const force = setTimeout(() => {
@@ -179,8 +180,9 @@ async function demoLive(args: string[]): Promise<void> {
       }
     });
   };
-  process.once('SIGINT', stopAll);
-  process.once('SIGTERM', stopAll);
+  const onSignal = () => stopAll('signal');
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
 
   try {
     // 2. Monitor: reuse one already serving this data directory, else start it.
@@ -224,14 +226,10 @@ async function demoLive(args: string[]): Promise<void> {
     console.log(`\n4. QuickNode Stream (backfill ${backfill} blocks)`);
     const { provisionStream } = await import('../streams/commands.js');
     const { createArcClient } = await import('../chain/arc.js');
-    const config = await provisionStream({
-      client: streamClient(),
-      key: process.env.QUICKNODE_API_KEY!,
-      webhookUrl,
-      backfillBlocks: backfill,
-      head: Number(await createArcClient().getBlockNumber({ cacheTime: 0 })),
-      directory,
-    });
+    const head = Number(await createArcClient().getBlockNumber({ cacheTime: 0 }));
+    const config = await withRetries(() =>
+      provisionStream({ client: streamClient(), key: process.env.QUICKNODE_API_KEY!.trim(), webhookUrl, backfillBlocks: backfill, head, directory }),
+    );
     console.log(`   Stream ${config.streamId}, live after block ${config.liveBoundary}`);
 
     // 5. Wait until the monitor has the whole backfill and live data.
@@ -258,31 +256,87 @@ async function demoLive(args: string[]): Promise<void> {
 
     await Promise.all(children.filter((c) => c.child.exitCode === null).map((c) => new Promise((done) => c.child.once('exit', done))));
   } catch (err) {
-    stopAll();
+    stopAll('error');
     await Promise.all(children.filter((c) => c.child.exitCode === null).map((c) => new Promise((done) => c.child.once('exit', done))));
     throw err;
   } finally {
-    process.off('SIGINT', stopAll);
-    process.off('SIGTERM', stopAll);
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
   }
   console.log('\nStopped. Pause the Stream so it stops posting to a dead tunnel:');
   console.log('  dashboard.quicknode.com → Streams → "TripWire USDC wallet safety" → Pause');
 }
 
-/** QuickNode needs the tunnel to answer; a fresh quick tunnel can take a few seconds to resolve. */
-async function waitReachable(url: string): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
+/** The host's IPv4 address on public DNS (what QuickNode sees), not this Mac's resolver. */
+export async function publicAddress(host: string): Promise<string | undefined> {
+  for (const resolver of ['https://cloudflare-dns.com/dns-query', 'https://dns.google/resolve']) {
     try {
-      const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(5000), redirect: 'manual' });
-      // 502/530: Cloudflare cannot reach the monitor yet. Anything else is the monitor answering.
-      if (![502, 503, 530].includes(res.status)) return;
+      const res = await fetch(`${resolver}?name=${encodeURIComponent(host)}&type=A`, { headers: { accept: 'application/dns-json' }, signal: AbortSignal.timeout(5000) });
+      const body = (await res.json()) as { Answer?: { type: number; data: string }[] };
+      const address = body.Answer?.find((a) => a.type === 1)?.data;
+      if (address) return address;
     } catch {
-      // DNS for a new trycloudflare name can lag; retry.
+      // Try the next resolver.
     }
-    await sleep(2000);
   }
-  console.log('   The tunnel did not answer within a minute; continuing (QuickNode retries deliveries).');
+  return undefined;
+}
+
+/** One GET to `url`, connecting to `address` instead of resolving the host locally. */
+export function probeVia(url: string, address: string): Promise<number | undefined> {
+  return new Promise((done) => {
+    const lookup = (_host: string, opts: { all?: boolean }, cb: (...args: unknown[]) => void) =>
+      opts.all ? cb(null, [{ address, family: 4 }]) : cb(null, address, 4);
+    const req = httpsRequest(url, { method: 'GET', timeout: 5000, lookup: lookup as never }, (res) => {
+      res.resume();
+      done(res.statusCode);
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => done(undefined));
+    req.end();
+  });
+}
+
+/**
+ * QuickNode checks the webhook when a Stream is created or re-targeted, so wait until the
+ * tunnel answers from the public internet. A new trycloudflare name can take a minute or
+ * two to appear in DNS, and macOS keeps a "not found" answer for a while longer, so this
+ * resolves through public DNS rather than this Mac's resolver.
+ */
+async function waitReachable(url: string): Promise<boolean> {
+  const host = new URL(url).hostname;
+  const deadline = Date.now() + 180_000;
+  let said = false;
+  while (Date.now() < deadline) {
+    const address = await publicAddress(host);
+    const status = address ? await probeVia(url, address) : undefined;
+    // 502/503/530: Cloudflare has the name but cannot reach the monitor yet. Anything else is the monitor answering.
+    if (status !== undefined && ![502, 503, 530].includes(status)) {
+      console.log('   reachable from the internet');
+      return true;
+    }
+    if (!said) {
+      console.log('   waiting for the tunnel to appear in public DNS (can take a minute or two)…');
+      said = true;
+    }
+    await sleep(3000);
+  }
+  console.log('   Still not reachable from the internet after 3 minutes; trying anyway.');
+  return false;
+}
+
+/** QuickNode refuses a Stream whose webhook it cannot reach yet; give a just-made tunnel a few more tries. */
+async function withRetries<T>(attempt: () => Promise<T>): Promise<T> {
+  for (let tries = 1; ; tries++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (tries >= 4 || !/returned 422/.test(message)) throw err;
+      console.log(`   QuickNode refused it (${message}); retrying in 30s (${tries}/3)…`);
+      await sleep(30_000);
+    }
+  }
 }
 
 async function waitReady(waitMs: number): Promise<boolean> {

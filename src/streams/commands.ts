@@ -15,6 +15,17 @@ class QuickNodeApiError extends Error {
 // The same installation boundary must survive a timed-out provider create request.
 const preparedSchema = z.object({ externalId: z.string(), startBlock: z.number().int().nonnegative(), liveBoundary: z.number().int().nonnegative(), wallets: z.object({ hot: z.string(), vault: z.string(), merchant: z.string() }) });
 
+/**
+ * A provider error message that is safe to print: secrets and the destination are blanked
+ * (the body may echo them), and anything that still looks like a credential is cut.
+ */
+export function redact(message: string, secrets: readonly string[]): string {
+  let out = message;
+  for (const secret of secrets) if (secret) out = out.split(secret).join('[redacted]');
+  out = out.replace(/https?:\/\/\S+/g, '[url]').replace(/\b[A-Za-z0-9_-]{32,}\b/g, '[redacted]');
+  return out.length > 300 ? `${out.slice(0, 300)}…` : out;
+}
+
 export async function provisionStream(opts: {
   client: StreamClient; key: string; webhookUrl: string; backfillBlocks: number; head: number; directory: string;
   fetchImpl?: typeof fetch;
@@ -42,7 +53,8 @@ export async function provisionStream(opts: {
     if (!res.ok) {
       const detail = await res.json().catch(() => null) as { message?: unknown } | null;
       const limit = typeof detail?.message === 'string' ? /Dataset batch size is greater than max batch size: \d+ > (\d+)/i.exec(detail.message) : null;
-      throw new QuickNodeApiError(`QuickNode Streams API ${method} ${path} returned ${res.status}`, limit ? Number(limit[1]) : undefined);
+      const reason = typeof detail?.message === 'string' ? `: ${redact(detail.message, [setup.credentials.securityToken, destination.href, destination.host, opts.key])}` : '';
+      throw new QuickNodeApiError(`QuickNode Streams API ${method} ${path} returned ${res.status}${reason}`, limit ? Number(limit[1]) : undefined);
     }
     const text = await res.text();
     return text ? JSON.parse(text) as Record<string, unknown> : {};
