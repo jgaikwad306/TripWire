@@ -9,7 +9,7 @@ import { startOwnerConsole } from '../owner/server.js';
 import { renderComparison, renderMarkdown, renderTerminal } from '../report/render.js';
 import { DEFAULT_REPORT_DIR, isReportFile, latestReportPath, loadReport, type SavedReport } from '../report/store.js';
 import type { Address } from '../types.js';
-import { ALL_SCENARIOS, API_SUITE, findScenario, type RedTeamScenario } from './scenarios/index.js';
+import { ALL_SCENARIOS, API_SUITE, MARKET_SUITE, findScenario, type RedTeamScenario } from './scenarios/index.js';
 import { JsonlAuditLog } from '../guard/audit.js';
 import { DEFAULT_RESULTS_DIR, saveResults } from '../report/results.js';
 import { paidApiScenario } from './scenarios/paid-api.js';
@@ -22,6 +22,8 @@ const RUN_USAGE = `Usage: npm run cli run -- (--all | --scenario <id> ...) [opti
 
   --all               run every scenario
   --suite api         run the paid-API suite: 9 Gateway nanopayment attacks + the research task
+  --suite market      run the Gemini prediction market suite: 9 attacks + the honest trade
+                      (results go to ${DEFAULT_RESULTS_DIR}/markets/ unless --results-dir is given)
   --scenario <id>     run one scenario (repeatable)
   --fake              offline: in-memory ledger instead of Arc Testnet
   --guard on|off      off = baseline that approves every payment (also GUARD_MODE=on|off; testnet only)
@@ -52,8 +54,9 @@ const defaultIo = (): CommandIo => ({ log: (line) => console.log(line), env: pro
 function selectScenarios(all: boolean, ids: readonly string[], suite?: string): readonly RedTeamScenario[] {
   if ([all, ids.length > 0, suite !== undefined].filter(Boolean).length > 1) throw new Error('Use one of --all, --suite or --scenario.');
   if (suite !== undefined) {
-    if (suite !== 'api') throw new Error(`Unknown suite "${suite}". The only suite is api.`);
-    return API_SUITE;
+    if (suite === 'api') return API_SUITE;
+    if (suite === 'market') return MARKET_SUITE;
+    throw new Error(`Unknown suite "${suite}". Use api or market.`);
   }
   if (all) return ALL_SCENARIOS;
   if (ids.length === 0) throw new Error(`Say what to run.\n\n${RUN_USAGE}`);
@@ -93,7 +96,9 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
   const noGuard = values['no-guard'] || guardMode === 'off';
   if (values.compare && noGuard) throw new Error('--compare already includes the guard-off run; drop --no-guard / --guard off.');
   // A run told to write somewhere else keeps its results and audit log there too.
-  const resultsDir = values['results-dir'] ?? (values.out === DEFAULT_REPORT_DIR ? DEFAULT_RESULTS_DIR : values.out);
+  // Market runs keep their own results, so they never overwrite the payment suite's committed live evidence.
+  const defaultResults = values.suite === 'market' ? join(DEFAULT_RESULTS_DIR, 'markets') : DEFAULT_RESULTS_DIR;
+  const resultsDir = values['results-dir'] ?? (values.out === DEFAULT_REPORT_DIR ? defaultResults : values.out);
   const audit = new JsonlAuditLog(values.audit ?? join(resultsDir, 'audit.jsonl'));
 
   const base = {
@@ -118,6 +123,9 @@ export async function runCommand(args: string[], io: CommandIo = defaultIo()): P
   io.log(`Results: ${written.markdown} and ${written.json}\nAudit log: ${audit.path}`);
   io.log(
     `Summary: guard off lost ${written.results.summary.lostWithGuardOff} USDC, guard on lost ${written.results.summary.lostWithGuardOn} USDC; ` +
+      (written.results.summary.atRiskWithGuardOff !== undefined
+        ? `Gemini USD at risk: guard off ${written.results.summary.atRiskWithGuardOff}, guard on ${written.results.summary.atRiskWithGuardOn}; `
+        : '') +
       `${written.results.summary.blockedWithGuard} / ${written.results.summary.attacks} attacks blocked.`,
   );
 }

@@ -186,9 +186,34 @@ describe('live dashboard', () => {
     expect(foreignHost).toBe(403);
     expect((await fetch(endpoint('/api/config'), { headers: { origin: 'https://evil.example' } })).status).toBe(403);
     expect((await fetch(endpoint('/api/runs'), { method: 'GET' })).status).toBe(405);
+    // The guard's rules: same auth as every /api route, no secrets, no addresses.
+    expect((await fetch(url.origin + '/api/guard')).status).toBe(403);
+    expect((await request('/api/guard?network=mainnet')).status).toBe(400);
+    const guard = await (await request('/api/guard?network=arc-testnet')).text();
+    expect(guard).not.toContain(secret);
+    expect(guard).not.toMatch(/0x[0-9a-fA-F]{40}/);
+    expect((JSON.parse(guard) as { rules: unknown[] }).rules).toHaveLength(10);
     const html = await request('/');
     expect(html.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
-    expect(await html.text()).toContain('Your agent. Under attack.');
+    const page = await html.text();
+    expect(page).toContain('Your agent. Under attack.');
+    expect(page).toMatch(/<body>\s*<div class="ledger-bg" aria-hidden="true">/);
+    // Tripwires: one above the hero's bottom row and one in each section's top gap, all decorative.
+    expect(page.match(/<span class="tripwire" aria-hidden="true">/g)).toHaveLength(7);
+    // How the guard works and Prediction markets: their own tabs beside the attack lab, which is selected first.
+    expect(page).toMatch(/<div class="view-tabs" role="tablist" aria-label="Views"><button type="button" role="tab" class="view-tab" id="tab-lab" aria-controls="panel-lab" aria-selected="true">Attack lab<\/button><button type="button" role="tab" class="view-tab" id="tab-guard" aria-controls="panel-guard" aria-selected="false" tabindex="-1">How the guard works<\/button><button type="button" role="tab" class="view-tab" id="tab-markets" aria-controls="panel-markets" aria-selected="false" tabindex="-1">Prediction markets<\/button><\/div>/);
+    expect(page).toMatch(/<main>\s*<div class="view-panel" id="panel-lab" role="tabpanel" aria-labelledby="tab-lab">\s*<section class="hero"/);
+    expect(page).toMatch(/<div class="view-panel" id="panel-guard" role="tabpanel" aria-labelledby="tab-guard" hidden>\s*<section class="section guard-section" id="guard"/);
+    expect(page).toContain('<a id="monitor-link" href="#streams-monitor">');
+    expect(page).toContain('A live <span class="red-team">red team</span> for an AI agent');
+    // Decorative chain: hidden from assistive tech, each block's prev is the previous hash.
+    expect(page).toMatch(/<div class="hero-art" aria-hidden="true">/);
+    expect(page).toContain('prev 0x0e99…72ff');
+    expect(page).toContain('awaiting the guard');
+    expect(page).toMatch(/<\/h1>\s*<p class="hero-tagline[^"]*">TripWire signs only what passes your rules\.<\/p>/);
+    // An inline icon stops the browser requesting /favicon.ico without the token (a 403).
+    expect(page).toMatch(/<link rel="icon" href="data:[^"]*">/);
+    expect(html.headers.get('content-security-policy')).toContain('img-src \'self\' data:');
     await request('/api/runs', config);
     const stream = await eventReader(await request(`/api/runs/${manager.run!.id}/events`));
     await stream.until((e) => e.type === 'run.failed'); await stream.cancel();

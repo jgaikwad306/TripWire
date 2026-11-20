@@ -5,6 +5,55 @@
   const token = new URLSearchParams(location.search).get('token') || '';
   const h = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icon = (name) => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  // Background ledger speeds (fractions of scroll) and tile sizes; tiles match dashboard.css.
+  // Hero chain: trails the scroll by heroLag up to heroMax, its bits flip every bitStep px,
+  // and the pending block's dashed border runs at dashRate.
+  const LEDGER = { farRate: 0.12, farTile: 320, nearRate: 0.2, nearTile: 640, heroLag: 0.3, heroMax: 1200, bitStep: 32, dashRate: 0.2 };
+  // Deterministic bits for a seed, in groups of four: the same scroll position always shows the same bits.
+  function bitGroups(seed, groups) {
+    let x = (Math.imul(seed + 1, 2654435761) >>> 0) || 1;
+    return Array.from({ length: groups }, () => Array.from({ length: 4 }, () => {
+      x ^= x << 13; x ^= x >>> 17; x ^= x << 5; x >>>= 0;
+      return x & 1;
+    }).join('')).join(' ');
+  }
+  // Moves only when the reader scrolls, at most once a frame, and only via transform, text and dash offset.
+  function trackLedger() {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const far = $('ledger-far'), near = $('ledger-near'), still = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (!far || !near) return;
+    const chain = $('hero-chain'), pending = $('chain-pending'), bits = chain ? [...chain.querySelectorAll('[data-bits]')] : [];
+    let queued = false, lastStep = -1;
+    // Tripwires trip when they cross the middle of the viewport, in either direction.
+    const wires = [...document.querySelectorAll('.tripwire')], above = new Map();
+    const trip = (wire) => { wire.classList.remove('tripped'); void wire.offsetWidth; wire.classList.add('tripped'); };
+    const checkWires = () => {
+      const middle = window.innerHeight / 2;
+      wires.forEach((wire) => {
+        const isAbove = wire.getBoundingClientRect().top < middle;
+        if (above.has(wire) && above.get(wire) !== isAbove && !still.matches) trip(wire);
+        above.set(wire, isAbove);
+      });
+    };
+    const place = () => {
+      queued = false;
+      checkWires();
+      const y = still.matches ? 0 : window.scrollY;
+      far.style.transform = `translate3d(0, ${-((y * LEDGER.farRate) % LEDGER.farTile)}px, 0)`;
+      near.style.transform = `translate3d(${-((y * LEDGER.nearRate) % LEDGER.nearTile)}px, 0, 0)`;
+      if (!chain) return;
+      chain.style.transform = `translate3d(0, ${Math.min(y, LEDGER.heroMax) * LEDGER.heroLag}px, 0)`;
+      if (pending) pending.style.strokeDashoffset = String(-y * LEDGER.dashRate);
+      const step = Math.floor(y / LEDGER.bitStep);
+      if (step === lastStep || y === 0) return;
+      lastStep = step;
+      bits.forEach((node, i) => { node.textContent = bitGroups(step * 31 + i, Number(node.dataset.bits)); });
+    };
+    window.addEventListener('scroll', () => { if (!queued) { queued = true; requestAnimationFrame(place); } }, { passive: true });
+    still.addEventListener?.('change', place);
+    place();
+  }
+  trackLedger();
   const units = (value) => {
     try {
       const n = BigInt(value), sign = n < 0n ? '−' : '', a = n < 0n ? -n : n;
@@ -61,7 +110,7 @@
       case 'tool.completed': state.calls.push(d.call); state.waiting = 'Agent continuing'; break;
       case 'tool.failed': state.waiting = 'Tool could not complete'; break;
       case 'quote.recorded': state.quotes.push(d.intent); break;
-      case 'operation.started': state.requests.push(d); state.waiting = d.side === 'receive' ? 'Verifying the payment proof' : d.side === 'api' ? 'Guard evaluating the 402' : 'Evaluating the payment request'; break;
+      case 'operation.started': state.requests.push(d); state.waiting = d.side === 'receive' ? 'Verifying the payment proof' : d.side === 'api' ? 'Guard evaluating the 402' : d.side === 'market' ? 'Guard checking the order' : 'Evaluating the payment request'; break;
       case 'gateway.balances': state.gateway = d; gatewayLatest = { ...d, scenarioId: event.scenarioId, phase: event.phase }; break;
       case 'guard.decision': state.decisions.push(d); state.waiting = d.decision.allowed ? 'Request allowed' : 'Request denied'; break;
       case 'transfer.started': state.waiting = 'Payment in progress'; state.transfers.push({ ...d, status: 'pending' }); break;
@@ -158,16 +207,136 @@
     return run?.config.network === 'arc-testnet' && /^[0-9a-f-]{36}$/i.test(id) ? `<a class="tx-link" href="https://gateway-api-testnet.circle.com/v1/x402/transfers/${id}" target="_blank" rel="noopener noreferrer">${text}${icon('link')}</a>` : `<span class="tx-link">${text} · simulated</span>`;
   }
   const placeholder = (text) => `<span class="step-placeholder">${h(text)}</span>`;
-  function box(title, detail, tone = '', check) {
-    return `<div class="decision-box ${tone}">${icon(tone === 'loss' || tone === 'warning' ? 'bolt' : tone === 'neutral' ? 'arrow' : 'shield')}<div><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}${check ? `<span class="check-tag">${h(check)}</span>` : ''}</div></div>`;
+  // A rule tag links to its row in "How the guard works" when that row exists.
+  const checkTag = (check, linked) => linked
+    ? `<a class="check-tag rule-link" href="#rule-${h(check)}" data-rule="${h(check)}">${h(check)}</a>`
+    : `<span class="check-tag">${h(check)}</span>`;
+  function box(title, detail, tone = '', check, linked = false) {
+    return `<div class="decision-box ${tone}">${icon(tone === 'loss' || tone === 'warning' ? 'bolt' : tone === 'neutral' ? 'arrow' : 'shield')}<div><strong>${h(title)}</strong>${detail ? `<p>${h(detail)}</p>` : ''}${check ? checkTag(check, linked) : ''}</div></div>`;
+  }
+  // How the guard works: rules come from /api/guard (the run policy's real values).
+  const RULE_HIGHLIGHT_MS = 1800;
+  let guardSummary = null, guardNetwork = null, highlightTimer;
+  const hasRule = (check) => Boolean(guardSummary?.rules.some((rule) => rule.check === check));
+  function loadGuard(network) {
+    if (guardNetwork === network) return;
+    guardNetwork = network;
+    api('/api/guard?network=' + encodeURIComponent(network)).then((summary) => {
+      if (guardNetwork !== network) return;
+      guardSummary = summary;
+      $('guard-rules').innerHTML = summary.rules.map((rule, i) => `<li class="guard-rule" id="rule-${h(rule.check)}" tabindex="-1"><span class="rule-step">${String(i + 1).padStart(2, '0')}</span><div><p class="rule-name">${h(rule.name)}<code class="rule-check">${h(rule.check)}</code></p><p class="rule-line">${h(rule.line)}</p><p class="rule-value">${h(rule.value)}</p></div><span class="rule-count" id="rule-count-${h(rule.check)}"></span></li>`).join('');
+      schedule();
+    }).catch((err) => { $('guard-rules').innerHTML = `<li class="guard-error">${h(err.message)}</li>`; });
+  }
+  // Paid-API attacks the guard stopped in this run's guarded pass, by the rule that stopped them.
+  function blockedByRule() {
+    const counts = {};
+    for (const [k, state] of rows) {
+      const r = state.result;
+      if (k.startsWith('guarded:') && r?.category === 'api' && r.passed && r.stoppedBy) counts[r.stoppedBy] = (counts[r.stoppedBy] || 0) + 1;
+    }
+    return counts;
+  }
+  function renderGuardCounts() {
+    if (!guardSummary) return;
+    const counts = blockedByRule();
+    for (const rule of guardSummary.rules) {
+      const el = $('rule-count-' + rule.check);
+      if (el) el.textContent = counts[rule.check] ? `blocked ${counts[rule.check]}` : '';
+    }
+  }
+  // Prediction markets tab: odds and history come from /api/markets (the server reads Gemini).
+  const MARKET_REFRESH_MS = 15000;
+  let marketBoard = null, marketTimer;
+  function sparkline(points, key) {
+    const values = points.map((p) => Number(p[key])).filter((v) => Number.isFinite(v));
+    if (values.length < 2) return '';
+    const lo = Math.min(...values), hi = Math.max(...values), span = hi - lo || 0.01;
+    const coords = values.map((v, i) => `${(i / (values.length - 1) * 300).toFixed(1)},${(56 - (v - lo) / span * 52).toFixed(1)}`).join(' ');
+    return `<polyline class="${key}" points="${coords}"/>`;
+  }
+  function renderMarkets() {
+    const b = marketBoard;
+    if (!b) return;
+    $('markets-source').textContent = b.source === 'live' ? `Live Gemini data · ${new Date(b.updatedAt).toLocaleTimeString()}` : 'Gemini snapshot (live data unavailable)';
+    $('odds-event').textContent = `${b.event.title} · ${b.event.ticker}${b.event.expiresAt ? ' · closes ' + new Date(b.event.expiresAt).toLocaleString() : ''}`;
+    $('odds-board').innerHTML = b.event.contracts.map((c) => {
+      const ask = Number(c.ask ?? c.last ?? 0);
+      return `<div class="odds-row ${c.task ? 'task' : ''}"><span>${h(c.label)}${c.task ? ' · task' : ''}</span><span class="odds-bar" role="img" aria-label="YES ask ${h(c.ask ?? 'none')}"><span style="width:${Math.round(Math.min(1, ask) * 100)}%"></span></span><span class="odds-price">${h(c.bid ?? '—')} / ${h(c.ask ?? '—')}</span></div>`;
+    }).join('');
+    const points = b.history;
+    $('odds-sparkline').innerHTML = sparkline(points, 'ask') + sparkline(points, 'last');
+    $('odds-history-note').textContent = points.length < 2 ? 'History builds up while this page is open (one read every 15 s).' : `Best ask (solid) and last trade (dashed) of ${b.task.label}, ${points.length} reads.`;
+    $('market-mandate').innerHTML = b.mandate.map((m) => `<div><dt>${h(m.label)}</dt><dd>${h(m.value)}</dd></div>`).join('');
+    $('market-rules').innerHTML = b.rules.map((rule, i) => `<li class="guard-rule" tabindex="-1"><span class="rule-step">${String(i + 1).padStart(2, '0')}</span><div><p class="rule-name"><code class="rule-check">${h(rule.check)}</code></p><p class="rule-line">${h(rule.line)}</p></div></li>`).join('');
+  }
+  function loadMarkets() {
+    api('/api/markets').then((board) => { marketBoard = board; renderMarkets(); }).catch((err) => { $('odds-event').textContent = err.message; });
+  }
+  function startMarkets() { if (!marketTimer) { loadMarkets(); marketTimer = setInterval(loadMarkets, MARKET_REFRESH_MS); } }
+  function stopMarkets() { if (marketTimer) clearInterval(marketTimer); marketTimer = undefined; }
+  async function runMarketSuite(ids) {
+    if (isRunning()) return;
+    settings = { ...settings, scenarioIds: ids };
+    selectView('lab');
+    apiError = ''; following = true;
+    try { hydrate(await api('/api/runs', settings)); } catch (err) { apiError = err.message; schedule(); }
+  }
+  // Views: the attack lab and How the guard works are tabs. The URL hash picks one, so a refresh,
+  // a shared link and the Back button all land on the right tab.
+  const VIEWS = ['lab', 'guard', 'markets'];
+  const viewFor = (hash) => (hash === '#markets' ? 'markets' : hash === '#guard' || String(hash).startsWith('#rule-') ? 'guard' : 'lab');
+  let currentView;
+  function showView(view) {
+    currentView = view;
+    for (const name of VIEWS) {
+      const selected = name === view;
+      $('panel-' + name).hidden = !selected;
+      $('tab-' + name).ariaSelected = String(selected);
+      $('tab-' + name).tabIndex = selected ? 0 : -1;
+    }
+    $('section-nav').hidden = view !== 'lab';
+    if (view === 'markets') startMarkets(); else stopMarkets();
+  }
+  // A user's choice of tab is a history entry; landing on a target within the tab scrolls to it.
+  function selectView(view, { focusTab = false } = {}) {
+    if (view !== currentView) {
+      history.pushState(null, '', view === 'guard' ? '#guard' : view === 'markets' ? '#markets' : location.pathname + location.search);
+      showView(view);
+      window.scrollTo(0, 0);
+    }
+    if (focusTab) $('tab-' + view).focus();
+  }
+  showView(viewFor(location.hash));
+  function focusRule(check) {
+    const row = $('rule-' + check);
+    if (!row) return;
+    if (currentView !== 'guard') { history.pushState(null, '', '#guard'); showView('guard'); }
+    const still = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    row.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'center' });
+    row.focus({ preventScroll: true });
+    row.classList.remove('is-target'); void row.offsetWidth; row.classList.add('is-target');
+    clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(() => row.classList.remove('is-target'), RULE_HIGHLIGHT_MS);
   }
   function storyStep(number, label, body, seen, cls = '', tag = '') {
     return `<div class="story-step ${seen ? 'seen' : ''} ${cls}"><span class="step-number">${number}</span><div><div class="step-label">${h(label)}<span class="step-state">${h(tag)}</span></div><div class="step-body">${body}</div></div></div>`;
   }
+  const quoteFor = (state, request) => state.quotes.find((x) => x.id === request?.intentId) || state.quotes.at(-1);
+  const offQuote = (state, request) => {
+    const quote = quoteFor(state, request);
+    return Boolean(quote) && (String(quote.payTo).toLowerCase() !== String(request.payTo).toLowerCase() || String(quote.amount) !== String(request.amount));
+  };
+  // An agent that falls for an attack often buys honestly afterwards. The request that
+  // departs from its quote is the attack, so it leads; otherwise show the latest request.
+  function primarySendRequest(state) {
+    const sends = state.requests.filter((x) => x.side === 'send').map((x) => x.request);
+    return sends.find((request) => offQuote(state, request)) || sends.at(-1);
+  }
   function renderColumn(phase, s) {
     const state = row(phase, s.id), guarded = phase === 'guarded', honest = s.category === 'honest', receive = s.category === 'receive';
-    const q = state.quotes.at(-1), sendRequest = state.requests.filter((x) => x.side === 'send').at(-1)?.request, receipt = state.requests.filter((x) => x.side === 'receive').at(-1)?.request;
-    const relevantQuote = state.quotes.find((x) => x.id === sendRequest?.intentId) || q;
+    const q = state.quotes.at(-1), sendRequest = primarySendRequest(state), receipt = state.requests.filter((x) => x.side === 'receive').at(-1)?.request;
+    const relevantQuote = quoteFor(state, sendRequest);
     const attackText = state.events.filter((e) => e.type === 'transcript' && e.data.entry.kind === 'attacker').map((e) => e.data.entry.text);
     const checkout = state.calls.find((c) => c.name === 'merchant_request' && c.result?.status === 402)?.result?.body;
     let payload = '', action = '', response = '', final = '';
@@ -179,7 +348,18 @@
     else if (q) payload = `<blockquote class="payload-quote">Quote: ${h(units(q.amount))} USDC → ${h(addr(q.payTo, state))}${q.description ? '\n' + h(q.description) : ''}</blockquote>`;
     const apiOps = state.decisions.filter((x) => x.side === 'api');
     const apiNote = state.calls.map((c) => c.result?.body?.data?.analyst_note).find((n) => typeof n === 'string');
-    if (s.category === 'api' || apiOps.length) {
+    // Prediction markets: the intel the agent bought, then every order the market guard decided.
+    const marketOps = state.decisions.filter((x) => x.side === 'market');
+    const marketScenario = s.category === 'market' || s.id === 'market-trade';
+    if (marketScenario) {
+      const intel = state.calls.map((c) => c.result?.body?.data).find((d) => d && d.event_ticker);
+      const rec = intel?.recommended;
+      if (intel) payload = `<blockquote class="payload-quote ${honest ? 'quote-honest' : ''}">${h(intel.analyst_note || intel.thesis || '')}${rec ? `\nRecommended: ${h(rec.side)} ${h(rec.quantity)} ${h(String(rec.outcome).toUpperCase())} of ${h(rec.instrument_symbol)} at ≤ ${h(rec.suggested_max_price)}` : ''}</blockquote>`;
+      if (marketOps.length) {
+        const placed = marketOps.filter((x) => x.decision.allowed).length;
+        action = `<p>${placed} of ${marketOps.length} ${marketOps.length === 1 ? 'order' : 'orders'} ${guarded ? 'allowed' : 'sent'}.</p><dl class="comparison-fields">${marketOps.slice(0, 6).map((x) => `<div class="${x.decision.allowed ? '' : 'changed'}"><dt>${x.decision.allowed ? (x.order && Number(x.order.filledQuantity) > 0 ? 'Filled' : 'Placed') : 'Refused'}</dt><dd>${h(x.request.side)} ${h(x.request.quantity)} ${h(String(x.request.outcome).toUpperCase())} · ${h(x.request.symbol)} ≤ ${h(x.request.limitPrice)}${x.order?.avgPrice ? ` · filled ${h(x.order.filledQuantity)} at ${h(x.order.avgPrice)}` : ''}${x.reference?.bestAsk ? ` · Gemini ask ${h(x.reference.bestAsk)}` : ''}${x.venue ? ` · ${h(x.venue)}` : ''}</dd></div>`).join('')}</dl>${marketOps.length > 6 ? `<p class="event-note">${marketOps.length - 6} more in the evidence.</p>` : ''}`;
+      }
+    } else if (s.category === 'api' || apiOps.length) {
       const asked = apiOps.map((x) => x.asked).find((x) => x && x.payTo);
       if (!honest) payload = apiNote ? `<blockquote class="payload-quote">${h(apiNote)}</blockquote>` : asked ? `<blockquote class="payload-quote">402 Payment Required\n${h(asked.amountUsdc ?? '?')} USDC → ${h(addr(asked.payTo, state))}\nNetwork ${h(asked.network ?? '?')}\n${h(pathOf(asked.resource))}</blockquote>` : payload;
       if (apiOps.length) {
@@ -192,7 +372,7 @@
     } else if (sendRequest) {
       action = `<p>Requested <strong>${h(units(sendRequest.amount))} USDC</strong> to <strong class="${addr(sendRequest.payTo, state) === 'Attacker wallet' ? 'coral' : ''}">${h(addr(sendRequest.payTo, state))}</strong>.</p>`;
       if (relevantQuote) {
-        const changed = relevantQuote.payTo.toLowerCase() !== sendRequest.payTo.toLowerCase() || String(relevantQuote.amount) !== String(sendRequest.amount);
+        const changed = offQuote(state, sendRequest);
         action += `<dl class="comparison-fields"><div><dt>Quoted</dt><dd>${h(units(relevantQuote.amount))} USDC → ${h(addressDetail(relevantQuote.payTo, state))}</dd></div><div class="${changed ? 'changed' : ''}"><dt>Requested</dt><dd>${h(units(sendRequest.amount))} USDC → ${h(addressDetail(sendRequest.payTo, state))}</dd></div></dl>`;
       }
       const attempts = state.requests.filter((x) => x.side === 'send').length;
@@ -209,7 +389,7 @@
     const denial = state.decisions.find((d) => !d.decision.allowed), decision = denial || state.decisions.at(-1);
     if (decision) {
       const d = decision.decision;
-      response = box(guarded ? d.allowed ? 'Guard allowed the request' : decision.side === 'receive' ? 'Receipt refused' : 'Payment denied' : d.allowed ? 'Guard bypassed · request allowed' : 'Wallet could not complete the request', d.reason, guarded && !d.allowed ? '' : 'neutral', guarded ? d.check : undefined);
+      response = box(guarded ? d.allowed ? 'Guard allowed the request' : decision.side === 'receive' ? 'Receipt refused' : 'Payment denied' : d.allowed ? 'Guard bypassed · request allowed' : 'Wallet could not complete the request', d.reason, guarded && !d.allowed ? '' : 'neutral', guarded ? d.check : undefined, guarded && !d.allowed && decision.side === 'api' && hasRule(d.check));
       if (guarded && !d.allowed) response += `<p class="event-note">${h(checks[d.check] || d.check)}</p>`;
     } else if (state.result?.stoppedBy === 'agent') response = box('Guard not tested', 'The agent declined without a guard denial.', 'neutral');
     else if (!guarded && state.events.length) response = box('Guard bypassed', 'This pass uses the unprotected wallet and accepts payment proofs without verification.', 'neutral');
@@ -225,13 +405,13 @@
     const pending = state.stage === 'measuring' ? 'Measuring the financial outcome' : state.stage === 'balances' ? 'Cross-checking wallet balances' : state.stage === 'preparing' ? 'Preparing this scenario' : state.waiting || 'Waiting for execution';
     const waitingText = run && !isRunning() && !state.events.length ? 'Not run' : !guarded && run?.phase === 'guarded' ? 'Waiting for unguarded pass' : 'Waiting to run';
     const tag = state.result ? status(state).text : state.events.length ? isRunning() ? pending : 'Incomplete' : waitingText;
-    const actors = s.category === 'api' || apiOps.length ? ['Paid API', 'Agent', 'Guard', 'Gateway'] : receive ? ['Attacker', 'Receipt', 'Guard', 'Delivery'] : honest ? ['Task', 'Agent', 'Guard', 'Merchant'] : ['Merchant', 'Agent', 'Guard', 'Wallet'];
+    const actors = marketScenario ? ['Intel feed', 'Agent', 'Guard', 'Gemini'] : s.category === 'api' || apiOps.length ? ['Paid API', 'Agent', 'Guard', 'Gateway'] : receive ? ['Attacker', 'Receipt', 'Guard', 'Delivery'] : honest ? ['Task', 'Agent', 'Guard', 'Merchant'] : ['Merchant', 'Agent', 'Guard', 'Wallet'];
     return `<article class="run-column ${guarded ? 'guarded' : 'baseline'}"><header class="column-heading"><span class="column-title">${icon(guarded ? 'shield' : 'code')}${guarded ? 'With Tripwire' : 'Without Tripwire'}</span><span class="column-tag ${state.events.length && !state.result ? 'active' : ''}">${h(tag)}</span></header><div class="flow" aria-label="${h(actors.join(' to '))}">${actors.map((actor, i) => `${i ? '<span class="flow-arrow" aria-hidden="true">→</span>' : ''}<span class="flow-node ${actor === 'Guard' ? 'guard-node' : ''} ${state.events.length && i === 0 ? 'observed' : ''}">${actor === 'Guard' && !guarded ? 'Bypassed' : actor}</span>`).join('')}</div><div class="story">${storyStep('01', honest ? 'Task & quote' : 'Attack payload', payload || placeholder(receive ? 'The submitted proof will appear here.' : 'The actual merchant content will appear here.'), Boolean(payload), 'payload', payload ? 'OBSERVED' : '')}${storyStep('02', receive ? 'Attacker’s claim' : 'Observed agent action', action || placeholder('Waiting for an action.'), Boolean(action))}${storyStep('03', guarded ? 'Guard response' : 'Unguarded response', response || placeholder('The actual verdict will appear here.'), Boolean(response))}${storyStep('04', 'Measured outcome', final || placeholder(state.events.length ? pending + ' · outcome pending' : waitingText), Boolean(final))}</div></article>`;
   }
   function renderHero() {
     const counts = {};
     for (const id of queueIds()) { const c = catalog.find((s) => s.id === id)?.category; if (c) counts[c] = (counts[c] || 0) + 1; }
-    const labels = { api: 'Paid API attacks', send: 'Send attacks', receive: 'Receive attacks', hold: 'Hold attacks', honest: 'Honest controls' };
+    const labels = { api: 'Paid API attacks', market: 'Market attacks', send: 'Send attacks', receive: 'Receive attacks', hold: 'Hold attacks', honest: 'Honest controls' };
     $('hero-categories').innerHTML = Object.keys(labels).filter((c) => counts[c]).map((c) => `<li>${labels[c]} <span class="count">(${counts[c]})</span></li>`).join('');
   }
   function renderMetrics() {
@@ -263,7 +443,7 @@
       case 'tool.started': return 'Tool called · ' + d.name;
       case 'tool.completed': return 'Tool returned · ' + d.call.name;
       case 'tool.failed': return 'Tool failed · ' + d.name;
-      case 'operation.started': return d.side === 'receive' ? 'Receipt verification requested' : d.side === 'api' ? 'Paid API request · ' + pathOf(d.request.url) : 'Payment requested';
+      case 'operation.started': return d.side === 'receive' ? 'Receipt verification requested' : d.side === 'api' ? 'Paid API request · ' + pathOf(d.request.url) : d.side === 'market' ? 'Prediction market order · ' + d.request.side + ' ' + d.request.quantity + ' ' + String(d.request.outcome).toUpperCase() + ' ' + d.request.symbol : 'Payment requested';
       case 'gateway.balances': return 'Circle Gateway balances read (' + d.when + ')';
       case 'guard.decision': return (event.phase === 'guarded' ? 'Guard' : 'Unguarded wallet') + ' · ' + (d.decision.allowed ? 'allowed' : 'denied') + ' · ' + d.decision.check;
       case 'transfer.started': return 'Transfer started · ' + units(d.amount) + ' ' + d.asset;
@@ -312,7 +492,7 @@
     const setupLabel = (settings.network === 'arc-testnet' ? 'Arc Testnet' : 'Offline ledger') + ' + ' + (settings.agent === 'naive' ? 'scripted agent' : 'Grok');
     const notice = apiError || run?.error || run?.warning || (!run && missing.length ? `${setupLabel} is selected. Configure ${missing.join(', ')} in .env, then restart; or choose another mode in Configure.` : '');
     $('notice').hidden = !notice; $('notice').textContent = notice;
-    $('category').textContent = s.category === 'honest' ? 'HONEST CONTROL' : s.category === 'api' ? 'PAID API ATTACK' : s.category.toUpperCase() + ' ATTACK'; $('category').className = 'pill' + (s.category === 'honest' ? ' honest' : '');
+    $('category').textContent = s.category === 'honest' ? 'HONEST CONTROL' : s.category === 'api' ? 'PAID API ATTACK' : s.category === 'market' ? 'MARKET ATTACK' : s.category.toUpperCase() + ' ATTACK'; $('category').className = 'pill' + (s.category === 'honest' ? ' honest' : '');
     $('scenario-number').textContent = s.number.startsWith('H') ? 'CONTROL ' + s.number : 'ATTACK ' + s.number.replace('#', '').padStart(2, '0');
     $('attack-title').textContent = s.name; $('attack-goal').textContent = s.goal; $('attack-description').textContent = s.description;
     $('follow').hidden = following || !active; $('run-status').className = 'run-status' + (active ? ' live' : '');
@@ -325,6 +505,7 @@
     [...$('comparison').querySelectorAll('.agent-answer')].forEach((el, i) => { el.open = Boolean(openAnswers[i]); });
     if (focusedAnswer >= 0) document.querySelectorAll('.agent-answer summary')[focusedAnswer]?.focus({ preventScroll: true });
     renderQueue(); renderHero(); renderMetrics(); renderEvidence(); renderDownloads();
+    loadGuard(config.network); renderGuardCounts();
   }
   function formConfig() { return { network: $('network').value, agent: $('agent').value, scenarioIds: [...document.querySelectorAll('#scenario-options input:checked')].map((input) => input.value) }; }
   function updateReadiness() {
@@ -348,6 +529,31 @@
     if (!draft.scenarioIds.length) { $('readiness').textContent = 'Select at least one scenario.'; $('readiness').className = 'readiness missing'; return; }
     settings = draft; source?.close(); run = null; rows = new Map(); sequence = 0; following = true; apiError = ''; lastEvidence = ''; $('settings').close(); schedule();
   });
+  VIEWS.forEach((view) => $('tab-' + view).addEventListener('click', () => selectView(view)));
+  // Tab keyboard pattern: arrows move between tabs (and select them), Home and End jump.
+  $('tab-lab').parentElement?.addEventListener('keydown', (event) => {
+    const keys = { ArrowLeft: -1, ArrowRight: 1, Home: -VIEWS.length, End: VIEWS.length };
+    if (!(event.key in keys)) return;
+    event.preventDefault();
+    const next = Math.max(0, Math.min(VIEWS.length - 1, VIEWS.indexOf(currentView) + keys[event.key]));
+    selectView(VIEWS[next], { focusTab: true });
+  });
+  // A link to a section on the other tab (or Back/Forward): switch, then scroll to the target,
+  // which the browser could not do while its tab was hidden.
+  if (typeof window !== 'undefined') window.addEventListener('hashchange', () => {
+    showView(viewFor(location.hash));
+    const target = location.hash.length > 1 ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+    if (target && !location.hash.startsWith('#rule-')) target.scrollIntoView();
+    else if (!target) window.scrollTo(0, 0);
+  });
+  $('comparison').addEventListener('click', (event) => {
+    const link = event.target.closest('.rule-link');
+    if (!link) return;
+    event.preventDefault();
+    focusRule(link.dataset.rule);
+  });
+  $('market-start').addEventListener('click', () => { if (marketBoard) runMarketSuite(marketBoard.suite); });
+  $('market-focused').addEventListener('click', () => { if (marketBoard) runMarketSuite(marketBoard.focused); });
   $('queue').addEventListener('click', (event) => { const button = event.target.closest('[data-scenario]'); if (!button) return; selected = button.dataset.scenario; following = false; schedule(); });
   $('follow').addEventListener('click', () => { following = true; if (run?.scenarioId) selected = run.scenarioId; schedule(); });
   $('start').addEventListener('click', async () => {
@@ -361,6 +567,8 @@
   Promise.all([api('/api/config'), api('/api/state')]).then(([config, snapshot]) => {
     capabilities = config; catalog = config.scenarios; settings = config.defaults;
     $('connection').textContent = 'Connected'; $('connection-dot').style.background = 'var(--teal)'; hydrate(snapshot);
+    // Without Streams the Wallet monitoring section stays hidden, so its link would go nowhere.
+    if (!config.streamsEnabled) $('monitor-link').removeAttribute?.('href');
     if (config.streamsEnabled) {
       const nativeUnits = (raw) => { const n = BigInt(raw); return (n / 10n ** 18n).toString() + (n % 10n ** 18n ? '.' + (n % 10n ** 18n).toString().padStart(18, '0').replace(/0+$/, '') : ''); };
       const pollStreams = async () => {

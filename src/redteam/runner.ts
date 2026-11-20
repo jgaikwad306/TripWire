@@ -10,7 +10,7 @@ import { waitForTx, type World, type WorldFactory } from './world.js';
  * Order scenarios run in. On Arc every scenario shares one hot wallet, so the ones an
  * unguarded agent loses the most on go last and cannot starve the others within a run.
  */
-const EXECUTION_RANK: Record<ScenarioCategory, number> = { honest: 0, receive: 1, api: 2, send: 3, hold: 4 };
+const EXECUTION_RANK: Record<ScenarioCategory, number> = { honest: 0, receive: 1, api: 2, market: 3, send: 4, hold: 5 };
 
 const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -199,7 +199,8 @@ async function executeScenario(scenario: RedTeamScenario, makeWorld: WorldFactor
     // Measured from the guard's log, so it still counts when the scenario threw part-way.
     // The merchant's answer travels with a decision for the agent's sake; the report keeps
     // it in the transcript, not once more per decision.
-    const decisions = world.guard.decisions().map(({ merchantResponse: _answer, ...decision }) => decision);
+    // The market guard decides prediction market orders; its decisions count the same way.
+    const decisions = [...world.guard.decisions(), ...(world.market?.guard.decisions() ?? [])].map(({ merchantResponse: _answer, ...decision }) => decision);
     // Money the agent spent. Payments the guard settled as a merchant are evidence, not spending.
     const paid = unique(decisions.flatMap((d): TxHash[] => (d.txHash ? [d.txHash] : [])));
     const received = decisions.flatMap((d): TxHash[] => (d.receivedTx ? [d.receivedTx] : []));

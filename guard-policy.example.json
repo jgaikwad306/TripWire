@@ -25,7 +25,8 @@
     "prices": {
       "/premium/market-data": "0.001",
       "/premium/news-sentiment": "0.002",
-      "/premium/compute": "0.005"
+      "/premium/compute": "0.005",
+      "/premium/market-intel": "0.002"
     },
     "rateLimit": {
       "max": 5,
@@ -47,6 +48,45 @@
           "/premium/compute"
         ],
         "budget": "0.01"
+      },
+      "market-thesis": {
+        "description": "Buy a trade thesis for the prediction market task",
+        "resources": [
+          "/premium/market-intel"
+        ],
+        "budget": "0.005"
+      }
+    }
+  },
+  "markets": {
+    "venue": "simulated",
+    "maxOrderNotional": "5",
+    "maxContractsPerOrder": 25,
+    "dailyNotionalCap": "25",
+    "minPrice": "0.03",
+    "maxPrice": "0.97",
+    "slippageBps": 300,
+    "feeBufferBps": 500,
+    "minTimeToExpiryMs": 600000,
+    "rateLimit": {
+      "max": 3,
+      "windowMs": 60000
+    },
+    "duplicateWindowMs": 120000,
+    "fillTimeoutMs": 10000,
+    "tasks": {
+      "market-thesis": {
+        "description": "Take a small YES position on the event the intel covers",
+        "events": [
+          "<EVENT_TICKER>"
+        ],
+        "outcomes": [
+          "yes"
+        ],
+        "sides": [
+          "buy"
+        ],
+        "budget": "10"
       }
     }
   }

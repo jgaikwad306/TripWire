@@ -9,6 +9,10 @@ import { serializeReport } from '../report/store.js';
 import { RunManager, DashboardError, type LiveEvent, type RunConfig } from './manager.js';
 import { latestJournal, loadJournal, type RunJournal } from './journal.js';
 import { renderDashboard } from './page.js';
+import { guardRules } from './guard-rules.js';
+import { MarketBoardSource } from './markets.js';
+import { MARKET_FOCUSED_SCENARIOS } from './catalog.js';
+import { MARKET_SUITE } from '../redteam/scenarios/index.js';
 import { streamClient, streamsEnabled } from '../streams/client.js';
 
 export interface DashboardServer {
@@ -20,8 +24,16 @@ export interface DashboardServer {
 export async function startDashboard(options: {
   port?: number; outDir?: string; env?: NodeJS.ProcessEnv; defaults?: Partial<RunConfig>; manager?: RunManager;
   replay?: { journal: RunJournal; speed?: number };
+  /** The Prediction markets tab's odds board. Defaults to live Gemini public data (the snapshot in replay). */
+  markets?: MarketBoardSource;
 } = {}): Promise<DashboardServer> {
   const manager = options.manager ?? new RunManager(options);
+  const markets = options.markets ?? new MarketBoardSource({
+    env: manager.env,
+    live: !options.replay,
+    suite: MARKET_SUITE.map((s) => s.id),
+    focused: MARKET_FOCUSED_SCENARIOS,
+  });
   const token = randomBytes(24).toString('base64url');
   const streams = new Set<ServerResponse>();
   let allowedHosts: string[] = [];
@@ -57,6 +69,17 @@ export async function startDashboard(options: {
     }
     if (path === '/api/config') return send(res, 200, json(manager.config()));
     if (path === '/api/state') return send(res, 200, json(manager.snapshot()));
+    if (path === '/api/guard') {
+      // The guard's paid-API rules and the values a run on this network enforces. Summaries only.
+      const network = url.searchParams.get('network') ?? manager.config().defaults.network;
+      if (network !== 'fake' && network !== 'arc-testnet') throw new DashboardError('Choose network fake or arc-testnet.');
+      return send(res, 200, json(guardRules(network)));
+    }
+    if (path === '/api/markets') {
+      // Public Gemini market data, read server side; the browser never calls Gemini.
+      try { return send(res, 200, json(await markets.board())); }
+      catch (err) { throw new DashboardError(`Market data unavailable: ${err instanceof Error ? err.message : String(err)}`, 503); }
+    }
     if (path === '/api/streams') {
       if (!streamsEnabled(manager.env)) return send(res, 200, json({ enabled: false }));
       try { return send(res, 200, json(await streamClient(manager.env).status())); }
@@ -138,6 +161,7 @@ export async function startDashboard(options: {
   return {
     url: `http://127.0.0.1:${port}/?token=${token}`, manager,
     close: () => closed ??= (async () => {
+      markets.stop();
       closing = true;
       await manager.close();
       for (const stream of streams) stream.end();

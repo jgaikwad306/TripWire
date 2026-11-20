@@ -4,6 +4,7 @@ import { fakeUsdcCommand, refundCommand, setupCommand } from './wallet/commands.
 import { dashboardCommand } from './dashboard/server.js';
 import { streamsCommand } from './streams/commands.js';
 import { gatewayCommand } from './wallet/gateway.js';
+import { geminiCommand } from './gemini/commands.js';
 
 /**
  * Entry point: `npm run cli <command>`.
@@ -16,6 +17,7 @@ import { gatewayCommand } from './wallet/gateway.js';
  *   refund    — return testnet USDC from the attacker and merchant to the hot wallet [--keep <usdc>] [--dry-run]
  *   report    — re-render the latest report [--html]
  *   gateway   — Circle Gateway: `status` (addresses and balances) or `deposit <usdc>` from the hot wallet
+ *   gemini    — Gemini Prediction Markets: markets, snapshot, status, terms, smoke, cancel-all
  */
 type Command = (args: string[]) => Promise<void>;
 
@@ -31,6 +33,7 @@ const commands: Record<string, Command> = {
   refund: refundCommand,
   report: (args) => reportCommand(args),
   gateway: (args) => gatewayCommand(args),
+  gemini: (args) => geminiCommand(args),
 };
 
 const [name, ...args] = process.argv.slice(2);
