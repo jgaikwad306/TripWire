@@ -65,6 +65,108 @@ Read-only checks against the real Arc RPC, no keys needed:
 LIVE=1 npm test
 ```
 
+Every command, flag and recipe is in [Command reference](#command-reference).
+
+## Command reference
+
+Every command runs from the repo root. Commands without `--fake` use **Arc Testnet**: real Circle wallets and testnet USDC. Pass flags to an npm script after `--`, e.g. `npm run redteam:api -- --fake`.
+
+### npm scripts
+
+| Command | What it does | Network |
+|---|---|---|
+| `npm install` | Install dependencies | |
+| `npm test` | All tests, offline against in-memory fakes | offline |
+| `LIVE=1 npm test` | Also run the read-only checks against the real Arc RPC (no keys) | Arc, read-only |
+| `npm run test:watch` | Tests in watch mode | offline |
+| `npm run mutate` | Mutation test: switch each guard check off and confirm an attack then succeeds | offline |
+| `npm run typecheck` | `tsc --noEmit` | |
+| `npm run dashboard` | Tripwire live attack lab in the browser (default Arc Testnet + Grok) | Arc |
+| `npm run demo:replay` | Replay the latest recorded dashboard run; nothing is executed | offline |
+| `npm run redteam` | Every scenario, guard on then off, side by side | Arc |
+| `npm run redteam:api` | The 9 paid-API (Gateway nanopayment) attacks + the research task, on vs off | Arc |
+| `npm run redteam:market` | The 9 Gemini prediction market attacks + the honest trade, on vs off | Arc + Gemini |
+| `npm run compare` | Same as `redteam`: `run --all --compare` | Arc |
+| `npm run no-guard` | Every scenario with the guard off: the unprotected baseline | Arc |
+| `npm run buy` | One paid API purchase end to end: buy a wallet's USDC activity report and answer from it | Arc |
+| `npm run refund` | Return testnet USDC from the attacker and merchant wallets to the hot wallet | Arc |
+| `npm run setup-wallets` | Wallet addresses, USDC balances and Circle Gateway balances | Arc, read-only |
+| `npm run gateway:deposit -- <usdc>` | Deposit USDC from the hot wallet into Gateway (max 10) | Arc |
+| `npm run cli <command>` | Any CLI command below | |
+
+### CLI commands (`npm run cli <command>`)
+
+| Command | What it does |
+|---|---|
+| `setup` | First run: create the Circle wallets and an attacker key and print the `.env` lines. Later: addresses and balances |
+| `setup -- --test-transfer` | Send 0.01 USDC hot → merchant to prove the pipeline works |
+| `fake-usdc` | Deploy the counterfeit token for the counterfeit-USDC scenario (prints `FAKE_USDC_ADDRESS`) |
+| `run -- <options>` | Run red-team scenarios (options below) |
+| `compare` / `no-guard` | Shortcuts for `run --all --compare` and `run --all --no-guard` |
+| `buy -- <options>` | One paid purchase (options below) |
+| `refund -- [--keep <usdc>] [--dry-run]` | Refund to the hot wallet; `--keep` leaves this much with the attacker for gas (default 1), `--dry-run` only prints |
+| `report -- [file] [file2] [--html] [--markdown] [--out <dir>]` | Re-render the latest report, or the given one(s); `--html` builds the comparison page |
+| `gateway status` | Same as `npm run setup-wallets` |
+| `gateway deposit <usdc>` | Same as `npm run gateway:deposit` |
+| `dashboard -- <options>` | Same as `npm run dashboard` (options below) |
+| `gemini markets [--search btc] [--category Crypto]` | Live Gemini events with YES bid / ask (production data, no key) |
+| `gemini snapshot [--event TICKER]` | Refresh `fixtures/gemini/snapshot.json` from live data (do this before recording a demo: tickers expire) |
+| `gemini status` | Venue, terms, USD balance, positions and open orders for `GEMINI_ENV` |
+| `gemini terms --accept` | Accept Gemini's prediction market terms (owner action) |
+| `gemini smoke` | One guarded 1-contract order at the best ask |
+| `gemini cancel-all` | Cancel every open prediction market order |
+| `streams setup --webhook-url https://HOST/webhooks/quicknode [--backfill-blocks 10000]` | Create the QuickNode Stream for wallet monitoring |
+| `streams serve [--webhook-port 4021] [--control-port 4022]` | Run the Streams webhook receiver |
+| `streams status` | Stream delivery and freeze status |
+| `streams unfreeze --alert-id HASH:LOG_INDEX --reason "…"` | Clear a freeze after reviewing the transfer |
+
+### Red-team options (`redteam*`, `compare`, `no-guard`, `run`)
+
+| Flag | Meaning |
+|---|---|
+| `--all` | Every scenario (`run` only; the npm scripts set it) |
+| `--suite api` / `--suite market` | Only the paid-API or the Gemini suite |
+| `--scenario <id>` | One scenario; repeatable. Ids are listed by `npm run cli run -- --help` |
+| `--fake` | Offline: in-memory ledger instead of Arc Testnet; no keys, no funds |
+| `--compare` | Guard on, then off; writes `results/redteam.{json,md}` (market suite: `results/markets/`) |
+| `--guard on\|off`, `--no-guard` | Run only one side |
+| `--agent naive\|grok\|grok-careful` | Scripted agent, Grok, or Grok with a safety prompt (default: `grok` when `XAI_API_KEY` and `XAI_MODEL` are set, else `naive`) |
+| `--results-dir <dir>` | Where `redteam.{json,md}` and the audit log go. **Use it for test runs**: `--compare` otherwise overwrites the committed live evidence in `results/` |
+| `--audit <file>` | Decision log (default `results/audit.jsonl`) |
+| `--out <dir>` | Where reports go (default `reports/`) |
+| `--facilitator circle\|local` | Who settles x402 payments on Arc (default `circle`, falling back to `local` if Circle's trial runs out) |
+
+### Dashboard options
+
+| Flag | Meaning |
+|---|---|
+| `--fake` | Default the lab to the offline ledger |
+| `--agent naive\|grok\|grok-careful` | Default agent (default `grok`) |
+| `--port <n>` | Port (default: any free one) |
+| `--out <dir>` | Reports and run recordings (default `reports/`, recordings in `reports/runs/`) |
+| `--replay [file.journal.json] [--speed 2]` | Replay a recording (what `demo:replay` does); e.g. `npm run demo:replay -- recordings/markets.journal.json` |
+
+### Buy options
+
+`--address <0x…>` wallet to report on · `--approve-above <usdc>` payments above this wait for your approval on a local page · `--approval-wait <s>` (default 120) · `--crash-after-send` / `--resume` crash-recovery demo · `--state <file>` (default `.data/guard-state.json`) · `--fake` · `--no-guard` · `--agent <kind>` · `--out <dir>`
+
+### Common recipes
+
+```bash
+# Offline demo, no keys
+npm run dashboard -- --fake --agent naive
+npm run redteam:api -- --fake --results-dir reports/offline
+npm run redteam:market -- --fake
+
+# Live on Arc Testnet with Grok
+npm run setup-wallets                  # check balances
+npm run gateway:deposit -- 2           # keep at least 1.1 USDC in Gateway
+npm run redteam:api -- --agent grok
+GEMINI_ENV=simulated npm run redteam:market -- --agent grok   # Gemini side on the simulated venue
+npm run dashboard -- --agent grok
+npm run refund                         # recover what the unguarded pass spent
+```
+
 ## Wallet setup
 
 1. Create a Circle developer account at https://console.circle.com, make an API key, and register an entity secret (see the SDK's `generateEntitySecret` / `registerEntitySecretCiphertext`). Put both in `.env`.
